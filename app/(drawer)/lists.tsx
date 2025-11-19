@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+  type MutableRefObject,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,13 +22,21 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import type { ViewToken } from "react-native";
 import { FlashList } from "@shopify/flash-list";
+import type { FlashList as FlashListType } from "@shopify/flash-list";
 import { useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ionicons, Feather } from "@expo/vector-icons";
 import { useLists } from "../../src/hooks/useLists";
 import type { RemoteList } from "../../src/hooks/useLists";
-import { fetchListBacklog, type TaskWindowRow } from "../../src/services/api/tasks";
+import {
+  fetchListBacklog,
+  countTasksInList,
+  deleteTasksInList,
+  moveTasksToList,
+  type TaskWindowRow,
+} from "../../src/services/api/tasks";
 import { useTasks } from "../../src/hooks/useTasks";
 import { useListsDrawer } from "../../src/contexts/ListsDrawerContext";
 import { useAuth } from "../../src/contexts/AuthContext";
@@ -33,8 +50,10 @@ import { TaskCard } from "../../src/components/TaskCard";
 import { TaskDetailView } from "../../src/components/TaskDetailView";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import type { ThemeColors } from "../../src/theme";
+import { deleteList as deleteListRow } from "../../src/services/api/lists";
 
 type ViewMode = "calendar" | "tasks";
+type DeleteAction = "delete" | "move_inbox" | "move_other";
 
 type PlannerDay = {
   key: string;
@@ -46,6 +65,7 @@ type PlannerDay = {
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const DAY_COLUMN_WIDTH = 260;
+const HOUR_BLOCK_HEIGHT = 64;
 
 function formatHourLabel(hour: number) {
   const suffix = hour >= 12 ? "PM" : "AM";
@@ -55,6 +75,11 @@ function formatHourLabel(hour: number) {
 
 function formatDateKey(date: Date) {
   return date.toISOString().split("T")[0];
+}
+
+function formatRangeLabel(start?: PlannerDay, end?: PlannerDay) {
+  if (!start || !end) return "";
+  return `${start.monthText} ${start.dayNumber} – ${end.monthText} ${end.dayNumber}`;
 }
 
 function buildPlannerDays(offset: number, count: number): PlannerDay[] {
@@ -91,6 +116,25 @@ function buildPlannerDayRange(startOffset: number, endOffset: number): PlannerDa
   });
 }
 
+function getTaskTimeMetrics(task: LocalTask) {
+  if (!task.planned_start) return null;
+  const startDate = new Date(task.planned_start);
+  if (Number.isNaN(startDate.getTime())) return null;
+  const endDate = task.planned_end ? new Date(task.planned_end) : new Date(startDate.getTime() + 60 * 60 * 1000);
+  if (Number.isNaN(endDate.getTime())) return null;
+  let startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
+  let endMinutes = endDate.getHours() * 60 + endDate.getMinutes();
+  if (endMinutes <= startMinutes) {
+    endMinutes = startMinutes + 60;
+  }
+  startMinutes = Math.max(0, Math.min(24 * 60, startMinutes));
+  endMinutes = Math.max(startMinutes + 15, Math.min(24 * 60, endMinutes));
+  return {
+    startMinutes,
+    durationMinutes: endMinutes - startMinutes,
+  };
+}
+
 type PlannerStyles = ReturnType<typeof createStyles>;
 const PlannerStylesContext = createContext<PlannerStyles | null>(null);
 
@@ -106,7 +150,7 @@ function rowToLocalTask(row: TaskWindowRow): LocalTask {
   return {
     id: row.id,
     user_id: row.user_id,
-    list_id: row.list_id,
+    list_id: row.list_id ?? null,
     title: row.title,
     notes: row.notes,
     status: row.status,
@@ -131,7 +175,7 @@ export default function ListsScreen() {
   const daysPerView = isDesktop ? 7 : 3;
 
   const { data: lists, isLoading: listsLoading, upsertList } = useLists();
-  const { activeListId, setActiveListId, triggerCreateList, setCreateListHandler } = useListsDrawer();
+  const { activeListId, setActiveListId } = useListsDrawer();
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newListName, setNewListName] = useState("");
@@ -139,6 +183,10 @@ export default function ListsScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>("tasks");
   const [plannerOffset, setPlannerOffset] = useState(0);
   const plannerDays = useMemo(() => buildPlannerDays(plannerOffset, daysPerView), [plannerOffset, daysPerView]);
+  const calendarRangeLabel = useMemo(
+    () => formatRangeLabel(plannerDays[0], plannerDays[plannerDays.length - 1]),
+    [plannerDays],
+  );
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
   const earliestWeek = plannerOffset - 1;
@@ -157,12 +205,19 @@ export default function ListsScreen() {
   const [showBacklog, setShowBacklog] = useState(true);
   const [showTimebox, setShowTimebox] = useState(isDesktop);
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
+  const taskBoardRef = useRef<FlashListType<PlannerDay> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RemoteList | null>(null);
+  const [deleteTaskCount, setDeleteTaskCount] = useState<number | null>(null);
+  const [checkingDeleteTasks, setCheckingDeleteTasks] = useState(false);
+  const [deletingList, setDeletingList] = useState(false);
   const todayKey = formatDateKey(new Date());
   const [taskDayWindow, setTaskDayWindow] = useState(() => ({
     start: -daysPerView * 2,
     end: daysPerView * 2,
   }));
   const taskDays = useMemo(() => buildPlannerDayRange(taskDayWindow.start, taskDayWindow.end), [taskDayWindow]);
+  const [taskBoardFocusKey, setTaskBoardFocusKey] = useState(todayKey);
+  const [taskBoardRangeLabel, setTaskBoardRangeLabel] = useState<string | null>(null);
 
   useEffect(() => {
     const targetStart = plannerOffset * daysPerView - daysPerView * 2;
@@ -172,6 +227,7 @@ export default function ListsScreen() {
       end: Math.max(window.end, targetEnd),
     }));
   }, [plannerOffset, daysPerView]);
+
 
   const extendTaskDays = useCallback(
     (direction: "past" | "future") => {
@@ -184,16 +240,6 @@ export default function ListsScreen() {
     [daysPerView],
   );
 
-  const userName = useMemo(() => {
-    const email = session?.user.email ?? "";
-    const name =
-      (session?.user.user_metadata?.full_name as string | undefined) ??
-      (session?.user.user_metadata?.name as string | undefined) ??
-      "";
-    if (name) return name;
-    if (email) return email.split("@")[0];
-    return "You";
-  }, [session]);
   const userEmail = session?.user.email ?? "demo@wonton.app";
   useEffect(() => {
     setShowTimebox(isDesktop);
@@ -231,11 +277,6 @@ export default function ListsScreen() {
     }
   }, [plannerDays, railDayKey, selectedDayKey, currentStartKey, viewMode]);
 
-  useEffect(() => {
-    setCreateListHandler(() => () => setCreateModalOpen(true));
-    return () => setCreateListHandler(null);
-  }, [setCreateListHandler]);
-
   const backlogQuery = useQuery({
     queryKey: ["backlog", activeListId],
     queryFn: () => fetchListBacklog(activeListId ? [activeListId] : orderedLists.map((list) => list.id)),
@@ -247,9 +288,12 @@ export default function ListsScreen() {
     orderedLists.forEach((list) => {
       bucket[list.id] = [];
     });
+    const fallbackListId = orderedLists[0]?.id ?? null;
     (backlogQuery.data ?? []).forEach((task) => {
-      bucket[task.list_id] = bucket[task.list_id] ?? [];
-      bucket[task.list_id].push(task);
+      const targetListId = task.list_id ?? fallbackListId;
+      if (!targetListId) return;
+      bucket[targetListId] = bucket[targetListId] ?? [];
+      bucket[targetListId].push(task);
     });
     return bucket;
   }, [orderedLists, backlogQuery.data]);
@@ -282,6 +326,22 @@ export default function ListsScreen() {
   const selectedCanPrev = selectedDayIndex > 0;
   const selectedCanNext = selectedDayIndex >= 0 && selectedDayIndex < plannerDays.length - 1;
   const calendarGridHeight = Math.max(isDesktop ? 640 : 480, height - (isDesktop ? 320 : 240));
+  const fallbackTaskRangeLabel = useMemo(() => {
+    if (!taskDays.length) return "";
+    const focusIndex = taskDays.findIndex((day) => day.key === taskBoardFocusKey);
+    const safeIndex = focusIndex >= 0 ? focusIndex : 0;
+    const halfWindow = Math.floor(daysPerView / 2);
+    let startIndex = Math.max(0, safeIndex - halfWindow);
+    let endIndex = Math.min(taskDays.length - 1, startIndex + daysPerView - 1);
+    if (endIndex - startIndex + 1 < daysPerView) {
+      startIndex = Math.max(0, endIndex - (daysPerView - 1));
+    }
+    return formatRangeLabel(taskDays[startIndex], taskDays[endIndex]);
+  }, [taskDays, taskBoardFocusKey, daysPerView]);
+  const heroRangeLabel =
+    viewMode === "tasks"
+      ? taskBoardRangeLabel ?? (fallbackTaskRangeLabel || calendarRangeLabel)
+      : calendarRangeLabel;
 
   function stepRailDay(delta: number) {
     if (railDayIndex < 0) return;
@@ -298,13 +358,123 @@ export default function ListsScreen() {
   }
 
   function handleShiftWeek(delta: number) {
+    if (viewMode === "tasks") {
+      const currentIndex = taskDays.findIndex((day) => day.key === taskBoardFocusKey);
+      const safeIndex = currentIndex >= 0 ? currentIndex : taskDays.findIndex((day) => day.key === todayKey);
+      if (safeIndex < 0) return;
+      const targetIndex = Math.min(Math.max(safeIndex + delta * daysPerView, 0), taskDays.length - 1);
+      const nextKey = taskDays[targetIndex]?.key;
+      if (nextKey) {
+        setTaskBoardFocusKey(nextKey);
+        scrollTaskBoardToDay(nextKey);
+      }
+      return;
+    }
     setPlannerOffset((value) => value + delta);
   }
+
+  const scrollTaskBoardToDay = useCallback(
+    (dayKey: string) => {
+      const index = taskDays.findIndex((day) => day.key === dayKey);
+      if (index < 0) return;
+      requestAnimationFrame(() => {
+        taskBoardRef.current?.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.5,
+        });
+      });
+    },
+    [taskDays],
+  );
+
+  const handleTaskBoardVisibleRangeChange = useCallback((start: PlannerDay | null, end: PlannerDay | null) => {
+    if (!start || !end) return;
+    const label = formatRangeLabel(start, end);
+    setTaskBoardRangeLabel((prev) => (prev === label ? prev : label));
+  }, []);
+
+  useEffect(() => {
+    if (!taskDays.length) return;
+    if (!taskDays.some((day) => day.key === taskBoardFocusKey)) {
+      const fallbackKey = taskDays.find((day) => day.key === todayKey)?.key ?? taskDays[0]?.key;
+      if (fallbackKey) {
+        setTaskBoardFocusKey(fallbackKey);
+        scrollTaskBoardToDay(fallbackKey);
+      }
+    }
+  }, [taskDays, taskBoardFocusKey, todayKey, scrollTaskBoardToDay]);
+
+  useEffect(() => {
+    if (viewMode === "tasks") {
+      scrollTaskBoardToDay(taskBoardFocusKey);
+    }
+  }, [viewMode, taskBoardFocusKey, scrollTaskBoardToDay]);
 
   function handleResetToToday() {
     setPlannerOffset(0);
     setSelectedDayKey(todayKey);
     setRailDayKey(todayKey);
+    if (viewMode === "tasks") {
+      setTaskBoardFocusKey(todayKey);
+      scrollTaskBoardToDay(todayKey);
+    }
+  }
+
+  function handleCloseDeleteModal() {
+    if (deletingList) return;
+    setDeleteTarget(null);
+    setDeleteTaskCount(null);
+  }
+
+  async function handleRequestDeleteList(list: RemoteList) {
+    setDeleteTarget(list);
+    setDeleteTaskCount(null);
+    setCheckingDeleteTasks(true);
+    try {
+      const count = await countTasksInList(list.id);
+      setDeleteTaskCount(count);
+    } catch (error) {
+      Alert.alert("Unable to load list tasks", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setCheckingDeleteTasks(false);
+    }
+  }
+
+  async function handleConfirmDeleteList(action: DeleteAction, targetListId?: string | null) {
+    if (!deleteTarget) return;
+    setDeletingList(true);
+    try {
+      const hasTasks = (deleteTaskCount ?? 0) > 0;
+      if (hasTasks) {
+        if (action === "move_inbox") {
+          if (!inboxList) throw new Error("Inbox list not found.");
+          await moveTasksToList(deleteTarget.id, inboxList.id);
+        } else if (action === "move_other") {
+          if (!targetListId) throw new Error("Choose a list to move tasks into.");
+          await moveTasksToList(deleteTarget.id, targetListId);
+        } else {
+          await deleteTasksInList(deleteTarget.id);
+        }
+      }
+      await deleteListRow(deleteTarget.id);
+      if (activeListId === deleteTarget.id) {
+        const fallbackId =
+          (inboxList && inboxList.id !== deleteTarget.id ? inboxList.id : null) ??
+          orderedLists.find((list) => list.id !== deleteTarget.id)?.id ??
+          null;
+        setActiveListId(fallbackId);
+      }
+      setDeleteTarget(null);
+      setDeleteTaskCount(null);
+      queryClient.invalidateQueries({ queryKey: ["lists"] });
+      queryClient.invalidateQueries({ queryKey: ["backlog"] });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    } catch (error) {
+      Alert.alert("Unable to delete list", error instanceof Error ? error.message : "Please try again.");
+    } finally {
+      setDeletingList(false);
+    }
   }
 
   async function handleCreateList(name: string) {
@@ -350,11 +520,9 @@ export default function ListsScreen() {
 
   async function handleAddScheduledTask(dayKey: string, title: string) {
     if (!title.trim()) return;
-    const listId = inboxList?.id ?? orderedLists[0]?.id;
-    if (!listId) return;
     const newTask: LocalTask = {
       id: generateUUID(),
-      list_id: listId,
+      list_id: null,
       title: title.trim(),
       status: "todo",
       due_date: dayKey,
@@ -380,6 +548,7 @@ export default function ListsScreen() {
     if (!pendingTask) return;
     await queueTaskMutation({
       ...pendingTask,
+      list_id: null,
       due_date: dayKey,
       planned_start: null,
       planned_end: null,
@@ -397,6 +566,7 @@ export default function ListsScreen() {
     end.setHours(end.getHours() + 1);
     await queueTaskMutation({
       ...pendingTask,
+      list_id: null,
       due_date: dayKey,
       planned_start: start.toISOString(),
       planned_end: end.toISOString(),
@@ -442,8 +612,10 @@ export default function ListsScreen() {
           onAddTask={handleBacklogInput}
           onToggleTask={handleToggleBacklogTask}
           onBeginSchedule={handleBeginSchedule}
-          onCreateList={() => triggerCreateList()}
+          onCreateList={() => setCreateModalOpen(true)}
           onOpenTask={handleOpenTaskDetail}
+          onDeleteList={handleRequestDeleteList}
+          undeletableListId={inboxList?.id ?? null}
         />
         ) : null}
         <View style={styles.centerPane}>
@@ -459,9 +631,7 @@ export default function ListsScreen() {
             <PlannerHero
               viewMode={viewMode}
               onChangeViewMode={setViewMode}
-              rangeLabel={`${plannerDays[0]?.monthText ?? ""} ${plannerDays[0]?.dayNumber ?? ""} – ${
-                plannerDays[plannerDays.length - 1]?.monthText ?? ""
-              } ${plannerDays[plannerDays.length - 1]?.dayNumber ?? ""}`}
+              rangeLabel={heroRangeLabel}
               onPrev={() => handleShiftWeek(-1)}
               onNext={() => handleShiftWeek(1)}
               onToday={handleResetToToday}
@@ -504,6 +674,8 @@ export default function ListsScreen() {
             selectedDayKey={resolvedSelectedDayKey}
             onReachPast={() => extendTaskDays("past")}
             onReachFuture={() => extendTaskDays("future")}
+            listRef={taskBoardRef}
+            onVisibleRangeChange={handleTaskBoardVisibleRangeChange}
           />
         )}
         </View>
@@ -551,12 +723,22 @@ export default function ListsScreen() {
       <AppSettingsModal
         visible={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
-        userName={userName}
         userEmail={userEmail}
         onOpenFullSettings={() => {
           setSettingsModalOpen(false);
           router.push("/settings/personalization");
         }}
+      />
+      <DeleteListModal
+        visible={Boolean(deleteTarget)}
+        list={deleteTarget}
+        taskCount={deleteTaskCount}
+        checkingTasks={checkingDeleteTasks}
+        submitting={deletingList}
+        inboxList={inboxList ?? null}
+        lists={orderedLists}
+        onClose={handleCloseDeleteModal}
+        onConfirm={handleConfirmDeleteList}
       />
       <TaskDetailModal taskId={taskDetailId} onClose={() => setTaskDetailId(null)} />
       </SafeAreaView>
@@ -575,6 +757,8 @@ type BacklogPanelProps = {
   onBeginSchedule: (task: LocalTask) => void;
   onCreateList: () => void;
   onOpenTask: (task: LocalTask) => void;
+  onDeleteList: (list: RemoteList) => void;
+  undeletableListId: string | null;
 };
 
 function BacklogPanel({
@@ -588,6 +772,8 @@ function BacklogPanel({
   onBeginSchedule,
   onCreateList,
   onOpenTask,
+  onDeleteList,
+  undeletableListId,
 }: BacklogPanelProps) {
   const styles = usePlannerStyles();
   const { colors } = useTheme();
@@ -598,6 +784,7 @@ function BacklogPanel({
       <ScrollView style={styles.drawerListScroll}>
         {lists.map((list) => {
           const active = list.id === activeList?.id;
+          const disableDelete = list.id === undeletableListId;
           return (
             <Pressable
               key={list.id}
@@ -607,6 +794,18 @@ function BacklogPanel({
               <Text style={[styles.drawerListLabel, active && styles.drawerListLabelActive]} numberOfLines={1}>
                 {list.name ?? "Untitled"}
               </Text>
+              {!disableDelete ? (
+                <Pressable
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    onDeleteList(list);
+                  }}
+                  style={styles.listDeleteButton}
+                  hitSlop={10}
+                >
+                  <Ionicons name="trash-outline" size={14} color={colors.textMuted} />
+                </Pressable>
+              ) : null}
             </Pressable>
           );
         })}
@@ -725,6 +924,8 @@ type TaskPlannerBoardProps = {
   selectedDayKey: string;
   onReachPast?: () => void;
   onReachFuture?: () => void;
+  listRef?: MutableRefObject<FlashListType<PlannerDay> | null>;
+  onVisibleRangeChange?: (start: PlannerDay | null, end: PlannerDay | null) => void;
 };
 
 function TaskPlannerBoard({
@@ -739,10 +940,44 @@ function TaskPlannerBoard({
   selectedDayKey,
   onReachPast,
   onReachFuture,
+  listRef,
+  onVisibleRangeChange,
 }: TaskPlannerBoardProps) {
   const styles = usePlannerStyles();
+  const dayIndexMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    days.forEach((day, index) => {
+      map[day.key] = index;
+    });
+    return map;
+  }, [days]);
+  const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 60 }), []);
+  const handleViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      if (!onVisibleRangeChange) return;
+      let minIndex = Number.POSITIVE_INFINITY;
+      let maxIndex = -1;
+      viewableItems.forEach((token) => {
+        const key =
+          typeof token.key === "string" || typeof token.key === "number" ? String(token.key) : null;
+        if (!key) return;
+        const index = dayIndexMap[key];
+        if (index === undefined) return;
+        if (index < minIndex) minIndex = index;
+        if (index > maxIndex) maxIndex = index;
+      });
+      if (minIndex === Number.POSITIVE_INFINITY || maxIndex === -1) return;
+      const startDay = days[minIndex];
+      const endDay = days[maxIndex];
+      if (startDay && endDay) {
+        onVisibleRangeChange(startDay, endDay);
+      }
+    },
+    [dayIndexMap, days, onVisibleRangeChange],
+  );
   return (
     <FlashList
+      ref={listRef ?? null}
       horizontal
       data={days}
       estimatedItemSize={DAY_COLUMN_WIDTH + 16}
@@ -753,6 +988,8 @@ function TaskPlannerBoard({
       onEndReachedThreshold={0.4}
       onStartReached={onReachPast}
       onStartReachedThreshold={0.4}
+      onViewableItemsChanged={handleViewableItemsChanged}
+      viewabilityConfig={viewabilityConfig}
       renderItem={({ item: day }) => {
         const dayTasks = tasksByDay[day.key] ?? [];
         const isSelected = day.key === selectedDayKey;
@@ -832,29 +1069,48 @@ function WeekCalendarGrid({
         </View>
         <ScrollView
           style={[styles.calendarGridScroll, { height: gridHeight }]}
+          contentContainerStyle={styles.calendarGridBody}
           showsVerticalScrollIndicator={false}
         >
-          {HOURS.map((hour) => (
-            <View key={hour} style={styles.calendarGridRow}>
-              <View style={styles.calendarGridHour}>
+          <View style={styles.calendarHoursColumn}>
+            {HOURS.map((hour, index) => (
+              <View
+                key={hour}
+                style={[styles.calendarHourRow, index === HOURS.length - 1 && styles.calendarHourRowLast]}
+              >
                 <Text style={styles.calendarHourText}>{formatHourLabel(hour)}</Text>
               </View>
-              {days.map((day) => {
-                const hourTasks = (tasksByDay[day.key] ?? []).filter((task) => {
-                  if (!task.planned_start) return false;
-                  return new Date(task.planned_start).getHours() === hour;
-                });
-                return (
-                  <Pressable
-                    key={`${day.key}-${hour}`}
-                    style={[
-                      styles.calendarGridCell,
-                      day.key === selectedDayKey && styles.calendarGridCellSelected,
-                    ]}
-                    onPress={() => (pendingTask ? onDropPendingIntoSlot(day.key, hour) : undefined)}
-                  >
-                    {hourTasks.map((task) => (
-                      <Pressable key={task.id} style={styles.calendarBlock} onPress={() => onOpenTask(task)}>
+            ))}
+          </View>
+          {days.map((day) => {
+            const dayTasks = (tasksByDay[day.key] ?? []).filter((task) => Boolean(task.planned_start));
+            return (
+              <View key={day.key} style={styles.calendarDayColumn}>
+                <View style={styles.calendarDaySlots}>
+                  {HOURS.map((hour, index) => (
+                    <Pressable
+                      key={`${day.key}-${hour}`}
+                      style={[
+                        styles.calendarDaySlot,
+                        day.key === selectedDayKey && styles.calendarDaySlotSelected,
+                        index === HOURS.length - 1 && styles.calendarDaySlotLast,
+                      ]}
+                      onPress={() => (pendingTask ? onDropPendingIntoSlot(day.key, hour) : undefined)}
+                    />
+                  ))}
+                </View>
+                <View style={[styles.calendarDayTasks, { height: HOURS.length * HOUR_BLOCK_HEIGHT }]} pointerEvents="box-none">
+                  {dayTasks.map((task) => {
+                    const metrics = getTaskTimeMetrics(task);
+                    if (!metrics) return null;
+                    const top = (metrics.startMinutes / 60) * HOUR_BLOCK_HEIGHT;
+                    const height = Math.max(28, (metrics.durationMinutes / 60) * HOUR_BLOCK_HEIGHT);
+                    return (
+                      <Pressable
+                        key={task.id}
+                        style={[styles.calendarBlock, styles.calendarBlockFloating, { top, height }]}
+                        onPress={() => onOpenTask(task)}
+                      >
                         <Text style={styles.calendarBlockText}>{task.title}</Text>
                         <Pressable onPress={() => onToggleTask(task)}>
                           <Ionicons
@@ -864,12 +1120,12 @@ function WeekCalendarGrid({
                           />
                         </Pressable>
                       </Pressable>
-                    ))}
-                  </Pressable>
-                );
-              })}
-            </View>
-          ))}
+                    );
+                  })}
+                </View>
+              </View>
+            );
+          })}
         </ScrollView>
       </View>
     </ScrollView>
@@ -952,6 +1208,7 @@ function DailySchedulePanel({
   const styles = usePlannerStyles();
   const { colors } = useTheme();
   if (!day) return null;
+  const scheduledTasks = tasks.filter((task) => Boolean(task.planned_start));
   return (
     <View style={styles.timeboxPanel}>
       <View style={styles.panelHeader}>
@@ -965,31 +1222,40 @@ function DailySchedulePanel({
         </View>
       </View>
       <Text style={styles.timeboxDate}>{`${day.weekday}, ${day.monthText} ${day.dayNumber}`}</Text>
-      <ScrollView
-        style={styles.dayScheduleScroll}
-        contentContainerStyle={styles.dayScheduleScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {HOURS.map((hour, index) => {
-          const isLastHour = index === HOURS.length - 1;
-          const hourTasks = tasks.filter((task) => {
-            if (!task.planned_start) return false;
-            return new Date(task.planned_start).getHours() === hour;
-          });
-          return (
-            <View
-              key={`${day.key}-${hour}`}
-              style={[styles.dayScheduleRow, isLastHour && styles.dayScheduleRowLast]}
-            >
-              <View style={styles.dayScheduleHour}>
+      <ScrollView style={styles.dayScheduleScroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.dayScheduleGrid}>
+          <View style={styles.calendarHoursColumn}>
+            {HOURS.map((hour, index) => (
+              <View
+                key={`${day.key}-hour-${hour}`}
+                style={[styles.calendarHourRow, index === HOURS.length - 1 && styles.calendarHourRowLast]}
+              >
                 <Text style={styles.calendarHourText}>{formatHourLabel(hour)}</Text>
               </View>
-              <Pressable
-                style={styles.dayScheduleCell}
-                onPress={() => (pendingTask ? onDropPendingIntoSlot(day.key, hour) : undefined)}
-              >
-                {hourTasks.map((task) => (
-                  <Pressable key={task.id} style={styles.calendarBlock} onPress={() => onOpenTask(task)}>
+            ))}
+          </View>
+          <View style={styles.dayScheduleColumn}>
+            <View style={styles.dayScheduleSlots}>
+              {HOURS.map((hour, index) => (
+                <Pressable
+                  key={`${day.key}-slot-${hour}`}
+                  style={[styles.dayScheduleSlot, index === HOURS.length - 1 && styles.dayScheduleSlotLast]}
+                  onPress={() => (pendingTask ? onDropPendingIntoSlot(day.key, hour) : undefined)}
+                />
+              ))}
+            </View>
+            <View style={[styles.dayScheduleTasks, { height: HOURS.length * HOUR_BLOCK_HEIGHT }]} pointerEvents="box-none">
+              {scheduledTasks.map((task) => {
+                const metrics = getTaskTimeMetrics(task);
+                if (!metrics) return null;
+                const top = (metrics.startMinutes / 60) * HOUR_BLOCK_HEIGHT;
+                const height = Math.max(28, (metrics.durationMinutes / 60) * HOUR_BLOCK_HEIGHT);
+                return (
+                  <Pressable
+                    key={task.id}
+                    style={[styles.calendarBlock, styles.calendarBlockFloating, { top, height }]}
+                    onPress={() => onOpenTask(task)}
+                  >
                     <Text style={styles.calendarBlockText}>{task.title}</Text>
                     <Pressable onPress={() => onToggleTask(task)}>
                       <Ionicons
@@ -999,11 +1265,11 @@ function DailySchedulePanel({
                       />
                     </Pressable>
                   </Pressable>
-                ))}
-              </Pressable>
+                );
+              })}
             </View>
-          );
-        })}
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
@@ -1052,38 +1318,235 @@ function CreateListModal({ visible, value, onChangeValue, onClose, onSubmit, loa
   );
 }
 
+type DeleteListModalProps = {
+  visible: boolean;
+  list: RemoteList | null;
+  taskCount: number | null;
+  checkingTasks: boolean;
+  submitting: boolean;
+  inboxList: RemoteList | null;
+  lists: RemoteList[];
+  onClose: () => void;
+  onConfirm: (action: DeleteAction, targetListId?: string | null) => void;
+};
+
+function DeleteListModal({
+  visible,
+  list,
+  taskCount,
+  checkingTasks,
+  submitting,
+  inboxList,
+  lists,
+  onClose,
+  onConfirm,
+}: DeleteListModalProps) {
+  const styles = usePlannerStyles();
+  const { colors } = useTheme();
+  const [action, setAction] = useState<DeleteAction>("delete");
+  const [moveTargetId, setMoveTargetId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAction("delete");
+    setMoveTargetId(null);
+  }, [visible, list?.id]);
+
+  if (!list) return null;
+
+  const listName = list.name ?? "Untitled list";
+  const hasTasks = (taskCount ?? 0) > 0;
+  const availableTargets = lists.filter(
+    (candidate) => candidate.id !== list.id && candidate.id !== inboxList?.id,
+  );
+  const inboxDisabled = !inboxList || inboxList.id === list.id;
+  const otherDisabled = availableTargets.length === 0;
+
+  function selectAction(next: DeleteAction) {
+    setAction(next);
+    if (next === "move_other") {
+      setMoveTargetId((current) => current ?? availableTargets[0]?.id ?? null);
+    } else {
+      setMoveTargetId(null);
+    }
+  }
+
+  const confirmDisabled =
+    checkingTasks ||
+    submitting ||
+    (hasTasks && action === "move_other" && (otherDisabled || !moveTargetId)) ||
+    (hasTasks && action === "move_inbox" && inboxDisabled);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalCard} onPress={(event) => event.stopPropagation()}>
+          <Text style={styles.modalTitle}>{`Delete “${listName}”`}</Text>
+          {checkingTasks ? (
+            <View style={styles.deleteListStatus}>
+              <ActivityIndicator color={colors.accent} />
+              <Text style={styles.deleteListDescription}>Checking tasks in this list…</Text>
+            </View>
+          ) : hasTasks ? (
+            <>
+              <Text style={styles.deleteListDescription}>
+                This list contains {taskCount} task{taskCount === 1 ? "" : "s"}. Choose what to do with them before
+                deleting the list.
+              </Text>
+              <View style={styles.deleteOptionGroup}>
+                <Pressable
+                  style={styles.deleteOptionRow}
+                  onPress={() => selectAction("delete")}
+                >
+                  <Ionicons
+                    name={action === "delete" ? "radio-button-on" : "radio-button-off"}
+                    size={18}
+                    color={colors.text}
+                  />
+                  <View style={styles.deleteOptionLabels}>
+                    <Text style={styles.deleteOptionTitle}>Delete the tasks</Text>
+                    <Text style={styles.deleteOptionSubtitle}>Remove every task in this list forever.</Text>
+                  </View>
+                </Pressable>
+                <Pressable
+                  style={[styles.deleteOptionRow, inboxDisabled && styles.deleteOptionDisabled]}
+                  onPress={() => !inboxDisabled && selectAction("move_inbox")}
+                >
+                  <Ionicons
+                    name={action === "move_inbox" ? "radio-button-on" : "radio-button-off"}
+                    size={18}
+                    color={colors.text}
+                  />
+                  <View style={styles.deleteOptionLabels}>
+                    <Text style={styles.deleteOptionTitle}>Move tasks to Inbox</Text>
+                    <Text style={styles.deleteOptionSubtitle}>Keep everything and move it to Inbox.</Text>
+                  </View>
+                </Pressable>
+                <Pressable
+                  style={[styles.deleteOptionRow, otherDisabled && styles.deleteOptionDisabled]}
+                  onPress={() => !otherDisabled && selectAction("move_other")}
+                >
+                  <Ionicons
+                    name={action === "move_other" ? "radio-button-on" : "radio-button-off"}
+                    size={18}
+                    color={colors.text}
+                  />
+                  <View style={styles.deleteOptionLabels}>
+                    <Text style={styles.deleteOptionTitle}>Move tasks to another list</Text>
+                    <Text style={styles.deleteOptionSubtitle}>Choose another list to keep these tasks.</Text>
+                  </View>
+                </Pressable>
+              </View>
+              {action === "move_other" && !otherDisabled ? (
+                <View style={styles.moveListPicker}>
+                  {availableTargets.map((target) => {
+                    const selected = moveTargetId === target.id;
+                    return (
+                      <Pressable
+                        key={target.id}
+                        style={[styles.moveListOption, selected && styles.moveListOptionActive]}
+                        onPress={() => setMoveTargetId(target.id)}
+                      >
+                        <Text style={[styles.moveListOptionText, selected && styles.moveListOptionTextActive]}>
+                          {target.name ?? "Untitled"}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.deleteListDescription}>
+              Are you sure you want to delete this list? This action cannot be undone.
+            </Text>
+          )}
+          <View style={styles.modalActions}>
+            <Pressable onPress={onClose} style={styles.modalGhostButton} disabled={submitting}>
+              <Text style={styles.modalGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => onConfirm(action, moveTargetId)}
+              style={[styles.modalPrimaryButton, (confirmDisabled || submitting) && styles.modalPrimaryDisabled]}
+              disabled={confirmDisabled || submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color={colors.primaryText} />
+              ) : (
+                <Text style={styles.modalPrimaryText}>Delete list</Text>
+              )}
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 type AppSettingsModalProps = {
   visible: boolean;
   onClose: () => void;
-  userName: string;
   userEmail: string;
   onOpenFullSettings: () => void;
 };
 
-function AppSettingsModal({ visible, onClose, userName, userEmail, onOpenFullSettings }: AppSettingsModalProps) {
-  const initials = userName
+function AppSettingsModal({ visible, onClose, userEmail, onOpenFullSettings }: AppSettingsModalProps) {
+  const { signOut, session } = useAuth();
+  const displayName =
+    (session?.user.user_metadata?.display_name as string | undefined) ??
+    (session?.user.user_metadata?.full_name as string | undefined) ??
+    (session?.user.user_metadata?.name as string | undefined) ??
+    "";
+  const headerLabel = displayName || userEmail || "You";
+  const initials = headerLabel
     .split(" ")
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("")
     .slice(0, 2);
   const styles = usePlannerStyles();
-  const { preference, setPreference } = useTheme();
+  const { colors, preference, setPreference } = useTheme();
   const [notifications, setNotifications] = useState(true);
   const [rollover, setRollover] = useState(true);
   const [autoTheme, setAutoTheme] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    try {
+      setSigningOut(true);
+      await signOut();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Please try again.";
+      Alert.alert("Unable to sign out", message);
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
         <Pressable style={styles.settingsModalCard} onPress={(event) => event.stopPropagation()}>
           <View style={styles.settingsHeader}>
-            <View style={styles.settingsAvatar}>
+            <View style={styles.settingsHeaderInfo}>
+              <View style={styles.settingsAvatar}>
               <Text style={styles.settingsAvatarText}>{initials || "U"}</Text>
             </View>
             <View>
-              <Text style={styles.settingsUserName}>{userName}</Text>
+              <Text style={styles.settingsUserName}>{displayName || userEmail}</Text>
               <Text style={styles.settingsUserEmail}>{userEmail}</Text>
             </View>
+          </View>
+            <Pressable
+              style={[styles.settingsSignOutButton, signingOut && styles.settingsSignOutButtonDisabled]}
+              onPress={handleSignOut}
+              disabled={signingOut}
+            >
+              {signingOut ? (
+                <ActivityIndicator size="small" color={colors.dangerText} />
+              ) : (
+                <Text style={styles.settingsSignOutText}>Sign Out</Text>
+              )}
+            </Pressable>
           </View>
           <ScrollView style={styles.settingsModalScroll} contentContainerStyle={styles.settingsModalScrollContent}>
             <View style={styles.settingsSection}>
@@ -1224,6 +1687,10 @@ function createStyles(colors: ThemeColors) {
     paddingVertical: 8,
     borderRadius: 10,
     paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
   },
   drawerListItemActive: {
     backgroundColor: colors.border,
@@ -1235,6 +1702,10 @@ function createStyles(colors: ThemeColors) {
   drawerListLabelActive: {
     color: colors.accentMuted,
     fontWeight: "600",
+  },
+  listDeleteButton: {
+    padding: 6,
+    borderRadius: 999,
   },
   newListButton: {
     marginTop: 8,
@@ -1438,31 +1909,54 @@ function createStyles(colors: ThemeColors) {
   calendarGridScroll: {
     flexGrow: 1,
   },
-  calendarGridRow: {
+  calendarGridBody: {
     flexDirection: "row",
+    alignItems: "stretch",
   },
-  calendarGridHour: {
+  calendarHoursColumn: {
     width: 90,
     borderRightWidth: 1,
     borderColor: colors.border,
-    paddingVertical: 16,
+  },
+  calendarHourRow: {
+    height: HOUR_BLOCK_HEIGHT,
+    justifyContent: "center",
     alignItems: "center",
+    borderBottomWidth: 1,
+    borderColor: colors.border,
+  },
+  calendarHourRowLast: {
+    borderBottomWidth: 0,
   },
   calendarHourText: {
     color: colors.textMuted,
     fontSize: 12,
   },
-  calendarGridCell: {
+  calendarDayColumn: {
     width: 160,
     borderRightWidth: 1,
+    borderColor: colors.border,
+    position: "relative",
+  },
+  calendarDaySlots: {
+    flexDirection: "column",
+  },
+  calendarDaySlot: {
+    height: HOUR_BLOCK_HEIGHT,
     borderBottomWidth: 1,
     borderColor: colors.border,
-    padding: 6,
-    minHeight: 60,
-    gap: 6,
   },
-  calendarGridCellSelected: {
+  calendarDaySlotSelected: {
     backgroundColor: colors.surfaceElevated,
+  },
+  calendarDaySlotLast: {
+    borderBottomWidth: 0,
+  },
+  calendarDayTasks: {
+    position: "absolute",
+    top: 0,
+    left: 6,
+    right: 6,
   },
   calendarBlock: {
     borderRadius: 12,
@@ -1471,6 +1965,18 @@ function createStyles(colors: ThemeColors) {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  calendarBlockFloating: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    shadowColor: "rgba(0,0,0,0.15)",
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   calendarBlockText: {
     color: colors.text,
@@ -1535,30 +2041,29 @@ function createStyles(colors: ThemeColors) {
     borderRadius: 18,
     overflow: "hidden",
   },
-  dayScheduleScrollContent: {
-    flexGrow: 1,
-  },
-  dayScheduleRow: {
+  dayScheduleGrid: {
     flexDirection: "row",
-    alignItems: "stretch",
+  },
+  dayScheduleColumn: {
+    flex: 1,
+    position: "relative",
+  },
+  dayScheduleSlots: {
+    flexDirection: "column",
+  },
+  dayScheduleSlot: {
+    height: HOUR_BLOCK_HEIGHT,
     borderBottomWidth: 1,
     borderColor: colors.border,
   },
-  dayScheduleRowLast: {
+  dayScheduleSlotLast: {
     borderBottomWidth: 0,
   },
-  dayScheduleHour: {
-    width: 72,
-    borderRightWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-  },
-  dayScheduleCell: {
-    flex: 1,
-    padding: 8,
-    minHeight: 52,
-    gap: 6,
+  dayScheduleTasks: {
+    position: "absolute",
+    top: 0,
+    left: 8,
+    right: 8,
   },
   modalBackdrop: {
     flex: 1,
@@ -1586,7 +2091,14 @@ function createStyles(colors: ThemeColors) {
   settingsHeader: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
+  },
+  settingsHeaderInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
   },
   settingsAvatar: {
     width: 48,
@@ -1608,6 +2120,20 @@ function createStyles(colors: ThemeColors) {
   settingsUserEmail: {
     color: colors.textSecondary,
     fontSize: 12,
+  },
+  settingsSignOutButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  settingsSignOutButtonDisabled: {
+    opacity: 0.7,
+  },
+  settingsSignOutText: {
+    color: colors.danger,
+    fontWeight: "600",
   },
   settingsModalScroll: {
     maxHeight: 420,
@@ -1643,6 +2169,61 @@ function createStyles(colors: ThemeColors) {
     borderRadius: 12,
     padding: 12,
     color: colors.text,
+  },
+  deleteListStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  deleteListDescription: {
+    color: colors.textSecondary,
+    marginTop: 6,
+  },
+  deleteOptionGroup: {
+    marginTop: 16,
+    gap: 12,
+  },
+  deleteOptionRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  deleteOptionLabels: {
+    flex: 1,
+    gap: 2,
+  },
+  deleteOptionTitle: {
+    color: colors.text,
+    fontWeight: "600",
+  },
+  deleteOptionSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+  },
+  deleteOptionDisabled: {
+    opacity: 0.4,
+  },
+  moveListPicker: {
+    marginTop: 8,
+    gap: 8,
+  },
+  moveListOption: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  moveListOptionActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surfaceAlt,
+  },
+  moveListOptionText: {
+    color: colors.textSecondary,
+    fontWeight: "500",
+  },
+  moveListOptionTextActive: {
+    color: colors.accent,
   },
   modalActions: {
     flexDirection: "row",

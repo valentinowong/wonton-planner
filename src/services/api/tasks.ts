@@ -6,7 +6,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-
 export type TaskWindowRow = {
   id: string;
   user_id: string;
-  list_id: string;
+  list_id: string | null;
   title: string;
   notes: string | null;
   status: "todo" | "doing" | "done" | "canceled";
@@ -43,6 +43,25 @@ export async function upsertTaskRow(payload: Record<string, unknown>) {
 
 export async function deleteTaskRow(taskId: string) {
   const { error } = await supabase.from("tasks").delete().eq("id", taskId);
+  if (error) throw error;
+}
+
+export async function countTasksInList(listId: string) {
+  const { count, error } = await supabase
+    .from("tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("list_id", listId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function deleteTasksInList(listId: string) {
+  const { error } = await supabase.from("tasks").delete().eq("list_id", listId);
+  if (error) throw error;
+}
+
+export async function moveTasksToList(fromListId: string, toListId: string) {
+  const { error } = await supabase.from("tasks").update({ list_id: toListId }).eq("list_id", fromListId);
   if (error) throw error;
 }
 

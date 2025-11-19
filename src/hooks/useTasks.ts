@@ -10,7 +10,7 @@ function sanitizeTaskPayload(task: TaskLike): LocalTask {
   return {
     id: task.id,
     user_id: task.user_id,
-    list_id: task.list_id,
+    list_id: task.list_id ?? null,
     title: task.title,
     notes: task.notes ?? null,
     status: task.status,
@@ -33,7 +33,7 @@ function toWindowRow(
   return {
     id: task.id,
     user_id: task.user_id ?? fallback?.user_id ?? userIdFallback ?? "",
-    list_id: task.list_id,
+    list_id: task.list_id ?? null,
     title: task.title,
     notes: task.notes ?? null,
     status: task.status,

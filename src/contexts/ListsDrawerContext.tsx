@@ -7,8 +7,6 @@ type ListsDrawerContextValue = {
   setActiveListId: (value: string | null) => void;
   layoutMode: LayoutMode;
   setLayoutMode: (value: LayoutMode) => void;
-  triggerCreateList: () => void;
-  setCreateListHandler: (handler: (() => void) | null) => void;
 };
 
 const ListsDrawerContext = createContext<ListsDrawerContextValue | undefined>(undefined);
@@ -16,7 +14,6 @@ const ListsDrawerContext = createContext<ListsDrawerContextValue | undefined>(un
 export function ListsDrawerProvider({ children }: { children: ReactNode }) {
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("single");
-  const [createListHandler, setCreateListHandler] = useState<(() => void) | null>(null);
 
   const value = useMemo(
     () => ({
@@ -24,14 +21,8 @@ export function ListsDrawerProvider({ children }: { children: ReactNode }) {
       setActiveListId,
       layoutMode,
       setLayoutMode,
-      triggerCreateList: () => {
-        createListHandler?.();
-      },
-      setCreateListHandler: (handler: (() => void) | null) => {
-        setCreateListHandler(() => handler ?? null);
-      },
     }),
-    [activeListId, layoutMode, createListHandler],
+    [activeListId, layoutMode],
   );
 
   return <ListsDrawerContext.Provider value={value}>{children}</ListsDrawerContext.Provider>;

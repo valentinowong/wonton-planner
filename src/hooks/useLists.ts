@@ -19,11 +19,7 @@ export function useLists() {
 
   const ensureDefaults = useMutation({
     mutationFn: async ({ currentLists, userId }: { currentLists: RemoteList[] | undefined; userId: string }) => {
-      const defaults = [
-        { name: "Inbox", sort_index: 0, is_system: true },
-        { name: "Today", sort_index: 1, is_system: true },
-        { name: "Someday", sort_index: 2, is_system: true },
-      ];
+      const defaults = [{ name: "Inbox", sort_index: 0, is_system: true }];
       const existingNames = new Set((currentLists ?? []).map((list) => (list.name ?? "").toLowerCase()));
       const payload = defaults
         .filter((item) => !existingNames.has(item.name.toLowerCase()))

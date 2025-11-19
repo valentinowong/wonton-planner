@@ -24,3 +24,8 @@ export async function upsertList(payload: Partial<ListRow> & { name: string }) {
   const { error } = await supabase.from("lists").upsert(payload);
   if (error) throw error;
 }
+
+export async function deleteList(listId: string) {
+  const { error } = await supabase.from("lists").delete().eq("id", listId);
+  if (error) throw error;
+}

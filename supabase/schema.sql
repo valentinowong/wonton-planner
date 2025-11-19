@@ -26,7 +26,7 @@ create table public.lists (
 create table public.tasks (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users on delete cascade,
-  list_id uuid not null references public.lists(id) on delete cascade,
+  list_id uuid references public.lists(id) on delete cascade,
   title text not null,
   notes text,
   status task_status not null default 'todo',

@@ -151,12 +151,27 @@ export default function PersonalizationScreen() {
 }
 
 function SettingsSidebar({ userName, email }: { userName: string; email: string }) {
+  const { signOut } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
+  const { colors } = useTheme();
   const initials = userName
     .split(" ")
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("")
     .slice(0, 2);
   const styles = usePersonalizationStyles();
+  async function handleSignOut() {
+    if (signingOut) return;
+    try {
+      setSigningOut(true);
+      await signOut();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Please try again.";
+      Alert.alert("Unable to sign out", message);
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <View style={styles.sidebar}>
@@ -170,25 +185,35 @@ function SettingsSidebar({ userName, email }: { userName: string; email: string 
         </View>
       </View>
 
-      <ScrollView style={styles.navScroll} contentContainerStyle={styles.navContent}>
-        {NAV_SECTIONS.map((section) => (
-          <View key={section.title}>
-            <Text style={styles.navSectionLabel}>{section.title}</Text>
-            {section.items.map((item) => (
-              <Pressable
-                key={item.label}
-                style={[styles.navItem, item.active && styles.navItemActive]}
-                onPress={() => {
-                  if (item.active) return;
-                  Alert.alert("Coming soon", `${item.label} is on the way.`);
-                }}
-              >
-                <Text style={[styles.navItemText, item.active && styles.navItemTextActive]}>{item.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ))}
-      </ScrollView>
+      <View style={styles.sidebarBody}>
+        <ScrollView style={styles.navScroll} contentContainerStyle={styles.navContent}>
+          {NAV_SECTIONS.map((section) => (
+            <View key={section.title}>
+              <Text style={styles.navSectionLabel}>{section.title}</Text>
+              {section.items.map((item) => (
+                <Pressable
+                  key={item.label}
+                  style={[styles.navItem, item.active && styles.navItemActive]}
+                  onPress={() => {
+                    if (item.active) return;
+                    Alert.alert("Coming soon", `${item.label} is on the way.`);
+                  }}
+                >
+                  <Text style={[styles.navItemText, item.active && styles.navItemTextActive]}>{item.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ))}
+        </ScrollView>
+        <Pressable
+          style={[styles.signOutButton, signingOut && styles.signOutButtonDisabled]}
+          onPress={handleSignOut}
+          disabled={signingOut}
+        >
+          <Ionicons name="log-out-outline" size={18} color={colors.dangerText} />
+          <Text style={styles.signOutButtonText}>{signingOut ? "Signing out…" : "Sign Out"}</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -296,6 +321,9 @@ function createStyles(colors: ThemeColors) {
       borderRightWidth: 1,
       borderColor: colors.divider,
     },
+    sidebarBody: {
+      flex: 1,
+    },
     userCard: {
       flexDirection: "row",
       alignItems: "center",
@@ -350,6 +378,23 @@ function createStyles(colors: ThemeColors) {
     },
     navItemTextActive: {
       color: colors.primaryText,
+    },
+    signOutButton: {
+      marginTop: 16,
+      paddingVertical: 12,
+      borderRadius: 12,
+      backgroundColor: colors.danger,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    },
+    signOutButtonDisabled: {
+      opacity: 0.7,
+    },
+    signOutButtonText: {
+      color: colors.dangerText,
+      fontWeight: "700",
     },
     panel: {
       flex: 1,

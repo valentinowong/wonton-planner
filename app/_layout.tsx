@@ -2,6 +2,7 @@ import { Stack } from "expo-router";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { Provider as PaperProvider } from "react-native-paper";
 import { pushOutbox, subscribeToRealtime } from "../src/lib/sync";
 import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
 import { ThemeProvider, useTheme } from "../src/contexts/ThemeContext";
@@ -67,8 +68,10 @@ export default function RootLayout() {
     <QueryProvider>
       <AuthProvider>
         <ThemeProvider>
-          <AppSyncBridge />
-          <Navigator />
+          <PaperProvider>
+            <AppSyncBridge />
+            <Navigator />
+          </PaperProvider>
         </ThemeProvider>
       </AuthProvider>
     </QueryProvider>

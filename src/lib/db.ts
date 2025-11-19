@@ -4,7 +4,7 @@ import { openDatabaseSync, type SQLiteDatabase } from "expo-sqlite";
 export type LocalTask = {
   id: string;
   user_id?: string;
-  list_id: string;
+  list_id: string | null;
   title: string;
   notes?: string | null;
   status: "todo" | "doing" | "done" | "canceled";
@@ -57,7 +57,7 @@ const MIGRATIONS: string[] = [
   `create table if not exists tasks (
       id text primary key,
       user_id text,
-      list_id text not null,
+      list_id text,
       title text not null,
       notes text,
       status text default 'todo',
@@ -137,7 +137,53 @@ export async function initializeDatabase() {
   for (const statement of MIGRATIONS) {
     await db.execAsync(statement);
   }
+  await ensureTasksTableAllowsNullListId();
   initialized = true;
+}
+
+async function ensureTasksTableAllowsNullListId() {
+  if (!db) return;
+  type ColumnInfo = { name: string; notnull: number };
+  const columns = await db.getAllAsync<ColumnInfo>("pragma table_info('tasks');");
+  const listColumn = columns.find((column) => column.name === "list_id");
+  if (!listColumn || listColumn.notnull === 0) return;
+  await db.execAsync("BEGIN TRANSACTION;");
+  try {
+    await db.execAsync("ALTER TABLE tasks RENAME TO tasks_old;");
+    await db.execAsync(
+      `create table tasks (
+        id text primary key,
+        user_id text,
+        list_id text,
+        title text not null,
+        notes text,
+        status text default 'todo',
+        due_date text,
+        planned_start text,
+        planned_end text,
+        estimate_minutes integer,
+        actual_minutes integer,
+        priority integer,
+        sort_index integer,
+        updated_at text
+      );`,
+    );
+    await db.execAsync(
+      `insert into tasks (
+        id, user_id, list_id, title, notes, status, due_date, planned_start, planned_end,
+        estimate_minutes, actual_minutes, priority, sort_index, updated_at
+      )
+      select
+        id, user_id, list_id, title, notes, status, due_date, planned_start, planned_end,
+        estimate_minutes, actual_minutes, priority, sort_index, updated_at
+      from tasks_old;`,
+    );
+    await db.execAsync("drop table tasks_old;");
+    await db.execAsync("COMMIT;");
+  } catch (error) {
+    await db.execAsync("ROLLBACK;");
+    throw error;
+  }
 }
 
 export async function upsertTask(task: LocalTask) {
