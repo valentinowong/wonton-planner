@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SegmentedControl } from "../SegmentedControl";
@@ -8,6 +8,7 @@ import { useTheme } from "../../contexts/ThemeContext";
 import type { RemoteList } from "../../hooks/useLists";
 import { usePlannerStyles } from "./PlannerStylesContext";
 import type { DeleteAction } from "./types";
+import { queueTaskDeletion } from "../../lib/sync";
 
 type PlannerCreateListModalProps = {
   visible: boolean;
@@ -480,11 +481,29 @@ export function PlannerSettingsModal({
 type PlannerTaskDetailModalProps = {
   taskId: string | null;
   onClose: () => void;
+  onDeleteTask?: (taskId: string) => void | Promise<void>;
 };
 
-export function PlannerTaskDetailModal({ taskId, onClose }: PlannerTaskDetailModalProps) {
+export function PlannerTaskDetailModal({ taskId, onClose, onDeleteTask }: PlannerTaskDetailModalProps) {
   const styles = usePlannerStyles();
   const { colors } = useTheme();
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = useCallback(async () => {
+    if (!taskId || deleting) return;
+    try {
+      setDeleting(true);
+      if (onDeleteTask) {
+        await onDeleteTask(taskId);
+      } else {
+        await queueTaskDeletion(taskId);
+      }
+      onClose();
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleting, onClose, onDeleteTask, taskId]);
+
   return (
     <Modal visible={Boolean(taskId)} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
@@ -495,7 +514,29 @@ export function PlannerTaskDetailModal({ taskId, onClose }: PlannerTaskDetailMod
               <Ionicons name="close" size={18} color={colors.text} />
             </Pressable>
           </View>
-          {taskId ? <TaskDetailView taskId={taskId} scrollStyle={styles.taskDetailScroll} contentStyle={styles.taskDetailContent} /> : null}
+          {taskId ? (
+            <TaskDetailView taskId={taskId} scrollStyle={styles.taskDetailScroll} contentStyle={styles.taskDetailContent} />
+          ) : null}
+          {taskId && onDeleteTask ? (
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[
+                  styles.modalDangerButton,
+                  deleting && styles.modalDangerDisabled,
+                ]}
+                disabled={deleting}
+                onPress={handleDelete}
+              >
+                <Ionicons
+                  name="trash-outline"
+                  size={16}
+                  color={deleting ? colors.textMuted : colors.danger}
+                  style={styles.modalDangerIcon}
+                />
+                <Text style={styles.modalDangerText}>{deleting ? "Deleting…" : "Delete task"}</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>

@@ -27,7 +27,7 @@ import { useTasks } from "../../src/hooks/useTasks";
 import { useListsDrawer } from "../../src/contexts/ListsDrawerContext";
 import { useAuth } from "../../src/contexts/AuthContext";
 import type { LocalTask } from "../../src/lib/db";
-import { queueTaskMutation } from "../../src/lib/sync";
+import { queueTaskMutation, queueTaskDeletion } from "../../src/lib/sync";
 import { generateUUID } from "../../src/lib/uuid";
 import { useTheme } from "../../src/contexts/ThemeContext";
 import type { ThemeColors } from "../../src/theme";
@@ -681,6 +681,23 @@ export default function ListsScreen() {
     [queryClient],
   );
 
+  const handleReorderScheduledTask = useCallback(
+    async (task: LocalTask, dayKey: string, targetTaskId: string, position: "before" | "after") => {
+      const dayTasks = (scheduledByDay[dayKey] ?? []).filter((candidate) => candidate.id !== task.id);
+      const nextSortIndex = computeBacklogSortIndex(dayTasks, targetTaskId, position);
+      await queueTaskMutation({
+        ...task,
+        list_id: task.list_id ?? null,
+        due_date: dayKey,
+        sort_index: nextSortIndex,
+        updated_at: new Date().toISOString(),
+      });
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["task", task.id] });
+    },
+    [queryClient, scheduledByDay],
+  );
+
   const handleMoveScheduledTaskToBacklog = useCallback(
     async (task: LocalTask, listId: string, targetTaskId?: string | null, position?: "before" | "after") => {
       const listTasks = (backlogByList[listId] ?? []).filter((candidate) => candidate.id !== task.id);
@@ -822,6 +839,7 @@ export default function ListsScreen() {
                 onCalendarPreviewChange={setCalendarPreview}
                 onDropTaskOnDay={handleMoveScheduledTaskToDay}
                 onDropTaskOnList={handleMoveScheduledTaskToBacklog}
+                onReorderTaskOnDay={handleReorderScheduledTask}
               />
             )}
           </View>
@@ -898,7 +916,16 @@ export default function ListsScreen() {
           onClose={handleCloseDeleteModal}
           onConfirm={handleConfirmDeleteList}
       />
-      <PlannerTaskDetailModal taskId={taskDetailId} onClose={() => setTaskDetailId(null)} />
+      <PlannerTaskDetailModal
+        taskId={taskDetailId}
+        onClose={() => setTaskDetailId(null)}
+        onDeleteTask={async (id) => {
+          await queueTaskDeletion(id);
+          queryClient.invalidateQueries({ queryKey: ["tasks"] });
+          queryClient.invalidateQueries({ queryKey: ["backlog"] });
+          queryClient.invalidateQueries({ queryKey: ["task", id] });
+        }}
+      />
       {Platform.OS === "web" && dragPreview ? (
         dragPreview.variant === "calendar" ? null : dragPreview.variant === "taskBoard" ? (
           <View
@@ -1077,25 +1104,50 @@ function createStyles(colors: ThemeColors) {
   },
   listTaskWrapper: {
     gap: 4,
+    position: "relative",
+    paddingVertical: 6,
+  },
+  listTaskGhostWrapper: {
+    opacity: 0.7,
+  },
+  listTaskPlaceholderWrapper: {
+    opacity: 0,
   },
   listTaskWrapperInner: {
     borderRadius: 12,
   },
+  listTaskDragging: {
+    opacity: 0.6,
+    transform: Platform.OS === "web" ? [{ scale: 0.98 }] : undefined,
+  },
   listTaskHover: {
     borderRadius: 12,
-    shadowColor: colors.accent,
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: colors.accent,
   },
   dropIndicator: {
-    height: 4,
+    position: "absolute",
+    left: 8,
+    right: 8,
+    height: 2,
     borderRadius: 999,
     backgroundColor: colors.accent,
-    marginHorizontal: 8,
-    marginBottom: 4,
     opacity: 0.9,
+  },
+  dropIndicatorBefore: {
+    top: 0,
+  },
+  dropIndicatorAfter: {
+    bottom: 0,
+  },
+  dropIndicatorInline: {
+    height: 2,
+    borderRadius: 999,
+    backgroundColor: colors.accent,
+    opacity: 0.9,
+    marginVertical: 4,
+    marginHorizontal: 8,
+    pointerEvents: "box-only",
   },
   centerPane: {
     flex: 1,
@@ -1113,13 +1165,12 @@ function createStyles(colors: ThemeColors) {
   dragPreviewCard: {
     backgroundColor: colors.surface,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: "rgba(0,0,0,0.2)",
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    borderWidth: 0,
+    shadowColor: "transparent",
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
     opacity: 0.92,
   },
   dragPreviewRow: {
@@ -1167,12 +1218,11 @@ function createStyles(colors: ThemeColors) {
     backgroundColor: colors.surface,
     borderRadius: 18,
     padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: "rgba(15,23,42,0.2)",
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    borderWidth: 0,
+    shadowColor: "transparent",
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
   },
   dragPreviewBoardTitle: {
     color: colors.text,
@@ -1289,11 +1339,6 @@ function createStyles(colors: ThemeColors) {
   taskColumnDropTarget: {
     borderWidth: 2,
     borderColor: colors.accent,
-    backgroundColor: colors.surface,
-    shadowColor: colors.accent,
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
   },
   taskColumnHeader: {
     marginBottom: 12,
@@ -1803,6 +1848,28 @@ function createStyles(colors: ThemeColors) {
   modalPrimaryText: {
     color: colors.primaryText,
     fontWeight: "600",
+  },
+  modalDangerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    backgroundColor: "transparent",
+  },
+  modalDangerIcon: {
+    marginTop: -1,
+  },
+  modalDangerText: {
+    color: colors.danger,
+    fontWeight: "700",
+  },
+  modalDangerDisabled: {
+    opacity: 0.6,
   },
   taskDetailModalCard: {
     width: "100%",

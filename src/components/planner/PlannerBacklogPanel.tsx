@@ -65,9 +65,12 @@ export function PlannerBacklogPanel({
   const [showAllLists, setShowAllLists] = useState(false);
   const [expandedLists, setExpandedLists] = useState<Record<string, boolean>>({});
   const [internalHoverTarget, setInternalHoverTarget] = useState<PlannerListHoverTarget | null>(null);
+  const [draggingTask, setDraggingTask] = useState<LocalTask | null>(null);
   const hasMultipleLists = lists.length > 1;
   const draggingTaskRef = useRef<LocalTask | null>(null);
+  const backlogHoverRef = useRef<(PlannerListHoverTarget & { yFraction?: number }) | null>(null);
   const hoverTarget = externalHoverTarget ?? internalHoverTarget;
+
   const visibleLists = useMemo(() => {
     if (showAllLists) return lists;
     return activeList ? [activeList] : [];
@@ -82,7 +85,9 @@ export function PlannerBacklogPanel({
 
   const handleDragStart = useCallback(
     (task: LocalTask, x: number, y: number) => {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
       draggingTaskRef.current = task;
+      setDraggingTask(task);
       onCalendarPreviewChange?.(null);
       onDragPreviewChange?.({ task, x, y, variant: "backlog" });
     },
@@ -91,19 +96,45 @@ export function PlannerBacklogPanel({
 
   const handleDragMove = useCallback(
     (x: number, y: number) => {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
       const task = draggingTaskRef.current;
       if (!task) return;
       let previewVariant: PlannerDragPreview["variant"] = "backlog";
+      const resolveBufferedPosition = (target: Extract<ReturnType<typeof resolvePlannerDropTarget>, { type: "task" }>) => {
+        const yFraction = typeof target.yFraction === "number" ? target.yFraction : target.position === "after" ? 0.75 : 0.25;
+        const previous = backlogHoverRef.current;
+        if (previous && previous.type === "task" && previous.taskId === target.taskId && previous.listId === target.listId) {
+          if (previous.position === "before") {
+            return yFraction > 0.6 ? "after" : "before";
+          }
+          if (previous.position === "after") {
+            return yFraction < 0.4 ? "before" : "after";
+          }
+        }
+        return target.position;
+      };
       if (Platform.OS === "web") {
         const target = resolvePlannerDropTarget(x, y, task.id);
+        if (target?.type !== "task") {
+          backlogHoverRef.current = null;
+        }
         if (target?.type === "task") {
-          setInternalHoverTarget({ type: "task", listId: target.listId, taskId: target.taskId, position: target.position });
+          const bufferedPosition = resolveBufferedPosition(target);
+          const nextHover: PlannerListHoverTarget = {
+            type: "task",
+            listId: target.listId,
+            taskId: target.taskId,
+            position: bufferedPosition,
+          };
+          backlogHoverRef.current = { ...nextHover, yFraction: target.yFraction };
+          setInternalHoverTarget(nextHover);
           onDayHoverChange?.(null);
           onDragPreviewChange?.({ task, x, y, variant: previewVariant });
           return;
         }
         if (target?.type === "list") {
-          setInternalHoverTarget({ type: "list", listId: target.listId });
+          const hoveringSameList = task.list_id === target.listId;
+          setInternalHoverTarget(hoveringSameList ? null : { type: "list", listId: target.listId });
           onDayHoverChange?.(null);
           onDragPreviewChange?.({ task, x, y, variant: previewVariant });
           return;
@@ -141,6 +172,7 @@ export function PlannerBacklogPanel({
       onCalendarPreviewChange?.(null);
       onDragPreviewChange?.({ task, x, y, variant: previewVariant });
       onDayHoverChange?.(null);
+      backlogHoverRef.current = null;
       setInternalHoverTarget(null);
     },
     [onCalendarPreviewChange, onDayHoverChange, onDragPreviewChange],
@@ -148,12 +180,23 @@ export function PlannerBacklogPanel({
 
   const handleDragRelease = useCallback(
     (x: number, y: number) => {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        draggingTaskRef.current = null;
+        setDraggingTask(null);
+        onDragPreviewChange?.(null);
+        setInternalHoverTarget(null);
+        onDayHoverChange?.(null);
+        onCalendarPreviewChange?.(null);
+        return;
+      }
       const task = draggingTaskRef.current;
       draggingTaskRef.current = null;
+      setDraggingTask(null);
       onDragPreviewChange?.(null);
       setInternalHoverTarget(null);
       onDayHoverChange?.(null);
       onCalendarPreviewChange?.(null);
+      backlogHoverRef.current = null;
       if (!task) return;
       if (Platform.OS === "web") {
         const target = resolvePlannerDropTarget(x, y, task.id);
@@ -162,6 +205,7 @@ export function PlannerBacklogPanel({
           return;
         }
         if (target?.type === "list") {
+          if (task.list_id === target.listId) return;
           onMoveTask(task, target.listId);
           return;
         }
@@ -180,10 +224,12 @@ export function PlannerBacklogPanel({
 
   const handleDragCancel = useCallback(() => {
     draggingTaskRef.current = null;
+    setDraggingTask(null);
     onDragPreviewChange?.(null);
     setInternalHoverTarget(null);
     onCalendarPreviewChange?.(null);
     onDayHoverChange?.(null);
+    backlogHoverRef.current = null;
   }, [onCalendarPreviewChange, onDayHoverChange, onDragPreviewChange]);
 
   function handleSelectList(listId: string) {
@@ -255,10 +301,11 @@ export function PlannerBacklogPanel({
           const listTasks = tasksByList[list.id] ?? [];
           const listTitle = list.name ?? "Untitled";
           const expanded = showAllLists ? expandedLists[list.id] ?? false : true;
+          const isListHovered = hoverTarget?.listId === list.id;
           return (
             <View
               key={list.id}
-              style={[styles.listBlock, hoverTarget?.type === "list" && hoverTarget.listId === list.id && styles.listBlockHover]}
+              style={[styles.listBlock, isListHovered && styles.listBlockHover]}
               dataSet={{ dragTarget: "listEntry", listId: list.id }}
               collapsable={false}
               nativeID={`${BACKLOG_LIST_ZONE_ID_PREFIX}${list.id}`}
@@ -284,37 +331,50 @@ export function PlannerBacklogPanel({
               {expanded ? (
                 <>
                   <AddTaskInput placeholder={`Add to ${listTitle}`} onSubmit={(title) => onAddTask(list.id, title)} />
-                  {hoverTarget?.type === "list" && hoverTarget.listId === list.id ? <DropIndicator /> : null}
                   {isLoading ? (
                     <ActivityIndicator color={colors.accentMuted} />
                   ) : listTasks.length ? (
                     <View style={styles.listTasksContainer}>
-                      {listTasks.map((task, index) => {
-                        const isHoveringTask = hoverTarget?.type === "task" && hoverTarget.listId === list.id && hoverTarget.taskId === task.id;
-                        const showBeforeIndicator = isHoveringTask && hoverTarget.position === "before";
-                        const showAfterIndicator = isHoveringTask && hoverTarget.position === "after";
-                        const isLast = index === listTasks.length - 1;
-                        return (
-                          <View key={task.id} style={styles.listTaskWrapper}>
-                            {showBeforeIndicator ? <DropIndicator /> : null}
-                            <DraggableTaskRow
-                              task={task}
-                              listId={list.id}
-                              onToggleTask={onToggleTask}
-                              onOpenTask={onOpenTask}
-                              subtitle={task.notes ?? undefined}
-                              onDragStart={handleDragStart}
-                              onDragMove={handleDragMove}
-                              onDragEnd={handleDragRelease}
-                              onDragCancel={handleDragCancel}
-                              active={isHoveringTask}
-                            />
-                            {showAfterIndicator || (isHoveringTask && isLast && hoverTarget.position === "after") ? (
-                              <DropIndicator />
-                            ) : null}
-                          </View>
-                        );
-                      })}
+                      {(() => {
+                        const hover = hoverTarget?.type === "task" && hoverTarget.listId === list.id ? hoverTarget : null;
+                        const insertIndex =
+                          hover && listTasks.length
+                            ? listTasks.findIndex((t) => t.id === hover.taskId) + (hover.position === "after" ? 1 : 0)
+                            : hover && hoverTarget?.type === "list" && hoverTarget.listId === list.id
+                            ? listTasks.length
+                            : null;
+                        const items: (LocalTask | { __drop: true })[] = [];
+                        listTasks.forEach((task, idx) => {
+                          if (insertIndex === idx) items.push({ __drop: true });
+                          items.push(task);
+                        });
+                        if (insertIndex !== null && insertIndex >= listTasks.length) {
+                          items.push({ __drop: true });
+                        }
+                        return items.map((item, idx) => {
+                          if ("__drop" in item) {
+                            return <View key={`drop-${idx}`} style={styles.dropIndicatorInline} />;
+                          }
+                          const task = item as LocalTask;
+                          const isDragging = draggingTask?.id === task.id;
+                          return (
+                            <View key={task.id} style={styles.listTaskWrapper}>
+                              <DraggableTaskRow
+                                task={task}
+                                listId={list.id}
+                                onToggleTask={onToggleTask}
+                                onOpenTask={onOpenTask}
+                                subtitle={task.notes ?? undefined}
+                                onDragStart={handleDragStart}
+                                onDragMove={handleDragMove}
+                                onDragEnd={handleDragRelease}
+                                onDragCancel={handleDragCancel}
+                                dragging={isDragging}
+                              />
+                            </View>
+                          );
+                        });
+                      })()}
                     </View>
                   ) : (
                     <Text style={styles.emptyListText}>No tasks yet</Text>
@@ -339,7 +399,7 @@ type DraggableTaskRowProps = {
   onDragMove: (x: number, y: number) => void;
   onDragEnd: (x: number, y: number) => void;
   onDragCancel: () => void;
-  active: boolean;
+  dragging?: boolean;
 };
 
 function DraggableTaskRow({
@@ -352,7 +412,7 @@ function DraggableTaskRow({
   onDragMove,
   onDragEnd,
   onDragCancel,
-  active,
+  dragging = false,
 }: DraggableTaskRowProps) {
   const styles = usePlannerStyles();
   const shouldSkipNextPressRef = useRef(false);
@@ -399,7 +459,7 @@ function DraggableTaskRow({
     <View
       collapsable={false}
       dataSet={{ dragTarget: "backlogTask", listId, taskId: task.id }}
-      style={[styles.listTaskWrapperInner, active && styles.listTaskHover]}
+      style={[styles.listTaskWrapperInner, dragging && styles.listTaskDragging]}
     >
       <GestureDetector gesture={gesture}>
         <ListTaskItem
@@ -407,15 +467,10 @@ function DraggableTaskRow({
           onToggle={onToggleTask}
           onPress={handleTaskPress}
           subtitle={subtitle}
-          active={active}
-          showGrabHandle
+          active={false}
+          showGrabHandle={false}
         />
       </GestureDetector>
     </View>
   );
-}
-
-function DropIndicator() {
-  const styles = usePlannerStyles();
-  return <View style={styles.dropIndicator} />;
 }

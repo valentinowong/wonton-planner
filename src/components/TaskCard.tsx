@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import type { LocalTask } from "../lib/db";
 import { useTheme } from "../contexts/ThemeContext";
 import type { ThemeColors, ThemeMode } from "../theme";
@@ -10,9 +11,10 @@ type Props = {
   onPress?: (task: LocalTask) => void;
   detailText?: string | null;
   badgeText?: string | null;
+  showGrabHandle?: boolean;
 };
 
-export function TaskCard({ task, onToggleStatus, onPress, detailText, badgeText }: Props) {
+export function TaskCard({ task, onToggleStatus, onPress, detailText, badgeText, showGrabHandle = false }: Props) {
   const isDone = task.status === "done";
   const { colors, mode } = useTheme();
   const styles = useMemo(() => createStyles(colors, mode), [colors, mode]);
@@ -54,11 +56,11 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       borderRadius: 12,
       padding: 12,
       marginBottom: 12,
-      shadowColor: mode === "dark" ? "rgba(0,0,0,0.6)" : "rgba(15,23,42,0.15)",
-      shadowOpacity: 0.08,
-      shadowRadius: 6,
-      shadowOffset: { width: 0, height: 2 },
-      elevation: 2,
+      shadowColor: "transparent",
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 0,
     },
     cardDone: {
       opacity: 0.6,

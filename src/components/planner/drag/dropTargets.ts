@@ -4,14 +4,18 @@ export const BACKLOG_LIST_HEADER_ID_PREFIX = "backlog-list-header-";
 export const BACKLOG_LIST_ZONE_ID_PREFIX = "backlog-list-zone-";
 
 export type PlannerDropTarget =
-  | { type: "task"; listId: string; taskId: string; position: "before" | "after" }
+  | { type: "task"; listId: string; taskId: string; position: "before" | "after"; yFraction?: number }
   | { type: "list"; listId: string }
+  | { type: "boardTask"; dayKey: string; taskId: string; position: "before" | "after"; yFraction?: number }
   | { type: "day"; dayKey: string; origin?: "daily" | "taskBoard" }
   | { type: "calendarSlot"; dayKey: string; hour: number };
 
 export type PlannerListHoverTarget = Extract<PlannerDropTarget, { type: "list" | "task" }>;
 
 export function resolvePlannerDropTarget(x: number, y: number, draggingTaskId?: string): PlannerDropTarget | null {
+  // React Native Gesture Handler can occasionally emit non-finite coords on web (e.g. NaN
+  // right after a drag starts). Guard so DOM APIs don't throw and lock up the UI.
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   if (typeof document === "undefined") return null;
   const candidates =
     typeof document.elementsFromPoint === "function"
@@ -36,8 +40,18 @@ function resolveDropTargetFromNode(node: HTMLElement, draggingTaskId: string | n
       const taskId = current.dataset?.taskId ?? current.getAttribute("data-task-id");
       if (listId && taskId && taskId !== draggingTaskId) {
         const rect = current.getBoundingClientRect();
-        const position: "before" | "after" = pointerY >= rect.top + rect.height / 2 ? "after" : "before";
-        return { type: "task", listId, taskId, position };
+        const yFraction = Math.max(0, Math.min(1, (pointerY - rect.top) / rect.height));
+        const position: "before" | "after" = yFraction >= 0.5 ? "after" : "before";
+        return { type: "task", listId, taskId, position, yFraction };
+      }
+    } else if (target === "taskBoardTask") {
+      const dayKey = current.dataset?.dayKey ?? current.getAttribute("data-day-key");
+      const taskId = current.dataset?.taskId ?? current.getAttribute("data-task-id");
+      if (dayKey && taskId && taskId !== draggingTaskId) {
+        const rect = current.getBoundingClientRect();
+        const yFraction = Math.max(0, Math.min(1, (pointerY - rect.top) / rect.height));
+        const position: "before" | "after" = yFraction >= 0.5 ? "after" : "before";
+        return { type: "boardTask", dayKey, taskId, position, yFraction };
       }
     } else if (target === "listEntry" || target === "listZone") {
       const listId = current.dataset?.listId ?? current.getAttribute("data-list-id");
@@ -66,6 +80,16 @@ function resolveDropTargetFromNode(node: HTMLElement, draggingTaskId: string | n
         const slotHeight = HOUR_BLOCK_HEIGHT || 60;
         const hour = Math.max(0, Math.min(23, Math.floor(relativeY / slotHeight)));
         return { type: "calendarSlot", dayKey, hour };
+      }
+    }
+    // Allow dedicated backlog drop rows to behave like task targets (position derived from data attribute).
+    if (current.dataset?.dragTarget === "backlogDrop") {
+      const listId = current.dataset?.listId ?? current.getAttribute("data-list-id");
+      const taskId = current.dataset?.taskId ?? current.getAttribute("data-task-id");
+      const positionAttr = current.dataset?.position ?? current.getAttribute("data-position");
+      const position: "before" | "after" = positionAttr === "after" ? "after" : "before";
+      if (listId && taskId && taskId !== draggingTaskId) {
+        return { type: "task", listId, taskId, position, yFraction: 0.5 };
       }
     }
     const domId = current.id ?? current.getAttribute?.("id");

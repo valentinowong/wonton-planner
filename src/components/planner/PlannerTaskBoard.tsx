@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
+import { useCallback, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import type { ViewToken } from "react-native";
 import { FlashList } from "@shopify/flash-list";
@@ -40,6 +40,7 @@ export type PlannerTaskBoardProps = {
     targetTaskId?: string | null,
     position?: "before" | "after",
   ) => void | Promise<void>;
+  onReorderTaskOnDay?: (task: LocalTask, dayKey: string, targetTaskId: string, position: "before" | "after") => void | Promise<void>;
 };
 
 export function PlannerTaskBoard({
@@ -63,6 +64,7 @@ export function PlannerTaskBoard({
   onCalendarPreviewChange,
   onDropTaskOnDay,
   onDropTaskOnList,
+  onReorderTaskOnDay,
 }: PlannerTaskBoardProps) {
   const styles = usePlannerStyles();
   const dayIndexMap = useMemo(() => {
@@ -76,6 +78,39 @@ export function PlannerTaskBoard({
   const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 60 }), []);
   const draggingTaskRef = useRef<LocalTask | null>(null);
   const hoverTargetRef = useRef<PlannerDropTarget | null>(null);
+  const [boardHoverTarget, setBoardHoverTarget] = useState<PlannerDropTarget | null>(null);
+  const [boardHoverDayKey, setBoardHoverDayKey] = useState<string | null>(null);
+
+  const resolveBufferedPosition = useCallback(
+    (target: Extract<PlannerDropTarget, { type: "boardTask" }>): "before" | "after" => {
+      const previous = boardHoverTarget?.type === "boardTask" ? boardHoverTarget : null;
+      const yFraction = typeof target.yFraction === "number" ? target.yFraction : 0.5;
+      if (previous && previous.taskId === target.taskId && previous.dayKey === target.dayKey) {
+        if (previous.position === "before") {
+          return yFraction > 0.6 ? "after" : "before";
+        }
+        if (previous.position === "after") {
+          return yFraction < 0.4 ? "before" : "after";
+        }
+      }
+      return yFraction >= 0.5 ? "after" : "before";
+    },
+    [boardHoverTarget],
+  );
+
+  const willReorderChangePosition = useCallback(
+    (task: LocalTask | null, dayKey: string, targetTaskId: string, position: "before" | "after") => {
+      if (!task) return false;
+      const dayTasks = tasksByDay[dayKey] ?? [];
+      const sourceIndex = dayTasks.findIndex((candidate) => candidate.id === task.id);
+      const targetIndex = dayTasks.findIndex((candidate) => candidate.id === targetTaskId);
+      if (sourceIndex === -1 || targetIndex === -1) return true;
+      const rawInsertIndex = targetIndex + (position === "after" ? 1 : 0);
+      const adjustedInsertIndex = rawInsertIndex > sourceIndex ? rawInsertIndex - 1 : rawInsertIndex;
+      return adjustedInsertIndex !== sourceIndex;
+    },
+    [tasksByDay],
+  );
 
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -105,6 +140,7 @@ export function PlannerTaskBoard({
       draggingTaskRef.current = task;
       onCalendarPreviewChange?.(null);
       onDragPreviewChange?.({ task, x, y, variant: "taskBoard" });
+      setBoardHoverTarget(null);
     },
     [onCalendarPreviewChange, onDragPreviewChange],
   );
@@ -119,9 +155,13 @@ export function PlannerTaskBoard({
         return;
       }
       const target = resolvePlannerDropTarget(x, y, task.id);
-      hoverTargetRef.current = target;
+      if (target?.type !== "boardTask") {
+        setBoardHoverTarget(null);
+      }
+      setBoardHoverDayKey(target?.type === "boardTask" || target?.type === "day" || target?.type === "calendarSlot" ? target.dayKey : null);
       if (target?.type === "calendarSlot") {
         previewVariant = "calendar";
+        hoverTargetRef.current = target;
         onDayHoverChange?.(target.dayKey);
         onListHoverChange?.(null);
         onCalendarPreviewChange?.({
@@ -133,12 +173,14 @@ export function PlannerTaskBoard({
         return;
       }
       if (target?.type === "day") {
+        hoverTargetRef.current = target;
         onDayHoverChange?.(target.dayKey);
         onListHoverChange?.(null);
         onCalendarPreviewChange?.(null);
         onDragPreviewChange?.({ task, x, y, variant: previewVariant });
         return;
       } else if (target?.type === "list" || target?.type === "task") {
+        hoverTargetRef.current = target;
         onDayHoverChange?.(null);
         onListHoverChange?.(
           target.type === "list"
@@ -148,13 +190,24 @@ export function PlannerTaskBoard({
         onCalendarPreviewChange?.(null);
         onDragPreviewChange?.({ task, x, y, variant: previewVariant });
         return;
+      } else if (target?.type === "boardTask") {
+        const bufferedPosition = resolveBufferedPosition(target);
+        const bufferedTarget: PlannerDropTarget = { ...target, position: bufferedPosition };
+        hoverTargetRef.current = bufferedTarget;
+        onDayHoverChange?.(null);
+        onListHoverChange?.(null);
+        onCalendarPreviewChange?.(null);
+        setBoardHoverTarget(bufferedTarget);
+        onDragPreviewChange?.({ task, x, y, variant: previewVariant });
+        return;
       }
+      hoverTargetRef.current = target;
       onDayHoverChange?.(null);
       onListHoverChange?.(null);
       onCalendarPreviewChange?.(null);
       onDragPreviewChange?.({ task, x, y, variant: previewVariant });
     },
-    [onCalendarPreviewChange, onDayHoverChange, onDragPreviewChange, onListHoverChange],
+    [onCalendarPreviewChange, onDayHoverChange, onDragPreviewChange, onListHoverChange, resolveBufferedPosition, willReorderChangePosition],
   );
 
   const finalizeDrag = useCallback(
@@ -170,6 +223,8 @@ export function PlannerTaskBoard({
       onCalendarPreviewChange?.(null);
       onDayHoverChange?.(null);
       onListHoverChange?.(null);
+      setBoardHoverTarget(null);
+      setBoardHoverDayKey(null);
       if (!commit || !task || !target) return;
       if (target.type === "calendarSlot" && onDropTaskOnDay) {
         const metrics = getTaskTimeMetrics(task);
@@ -181,6 +236,10 @@ export function PlannerTaskBoard({
       }
       if (target.type === "day" && onDropTaskOnDay) {
         onDropTaskOnDay(task, target.dayKey);
+      } else if (target.type === "boardTask" && onReorderTaskOnDay) {
+        const shouldCommit = willReorderChangePosition(task, target.dayKey, target.taskId, target.position);
+        if (!shouldCommit) return;
+        onReorderTaskOnDay(task, target.dayKey, target.taskId, target.position);
       } else if (onDropTaskOnList && (target.type === "list" || target.type === "task")) {
         onDropTaskOnList(
           task,
@@ -190,7 +249,16 @@ export function PlannerTaskBoard({
         );
       }
     },
-    [onCalendarPreviewChange, onDayHoverChange, onDragPreviewChange, onDropTaskOnDay, onDropTaskOnList, onListHoverChange],
+    [
+      onCalendarPreviewChange,
+      onDayHoverChange,
+      onDragPreviewChange,
+      onDropTaskOnDay,
+      onDropTaskOnList,
+      onListHoverChange,
+      onReorderTaskOnDay,
+      willReorderChangePosition,
+    ],
   );
 
   const handleDragEnd = useCallback(
@@ -222,7 +290,9 @@ export function PlannerTaskBoard({
       renderItem={({ item: day }) => {
         const dayTasks = tasksByDay[day.key] ?? [];
         const isSelected = day.key === selectedDayKey;
-        const dropHovered = dropHoverDayKey === day.key;
+        const dropHovered = dropHoverDayKey === day.key || boardHoverDayKey === day.key;
+        const hoverTarget =
+          boardHoverTarget?.type === "boardTask" && boardHoverTarget.dayKey === day.key ? boardHoverTarget : null;
         return (
           <View
             style={[
@@ -239,27 +309,44 @@ export function PlannerTaskBoard({
             </Pressable>
             {pendingTask ? (
               <Pressable style={styles.dropZone} onPress={() => onDropPending(day.key)}>
-                <Text style={styles.dropZoneLabel}>Drop “{pendingTask.title}” here</Text>
-              </Pressable>
-            ) : null}
-            {dayTasks.map((task) => {
+              <Text style={styles.dropZoneLabel}>Drop “{pendingTask.title}” here</Text>
+            </Pressable>
+          ) : null}
+            {dayTasks.map((task, index) => {
               const metrics = getTaskTimeMetrics(task);
               const durationMinutes = metrics?.durationMinutes ?? task.estimate_minutes ?? null;
               const durationText = durationMinutes ? formatDuration(durationMinutes) : null;
               const detailText = formatTaskStartTime(task);
+              const isHoveringTask = hoverTarget?.taskId === task.id;
+              const isDropHover = hoverTarget?.type === "boardTask" && hoverTarget.taskId === task.id;
+              const showBeforeIndicator = isDropHover && hoverTarget.position === "before";
+              const showAfterIndicator = isDropHover && hoverTarget.position === "after";
+              const isLast = index === dayTasks.length - 1;
               return (
-                <DraggableBoardTaskCard
-                  key={task.id}
-                  task={task}
-                  onToggleStatus={onToggleTask}
-                  onOpenTask={onOpenTask}
-                  badgeText={durationText}
-                  detailText={detailText}
-                  onDragStart={handleDragStart}
-                  onDragMove={handleDragMove}
-                  onDragEnd={handleDragEnd}
-                  onDragCancel={handleDragCancel}
-                />
+                <View key={task.id} style={styles.listTaskWrapper}>
+                  {showBeforeIndicator ? <View style={[styles.dropIndicator, styles.dropIndicatorBefore]} /> : null}
+                  <View
+                    collapsable={false}
+                    dataSet={{ dragTarget: "taskBoardTask", dayKey: day.key, taskId: task.id }}
+                    style={styles.listTaskWrapperInner}
+                  >
+                    <DraggableBoardTaskCard
+                      task={task}
+                      onToggleStatus={onToggleTask}
+                      onOpenTask={onOpenTask}
+                      badgeText={durationText}
+                      detailText={detailText}
+                      showGrabHandle={false}
+                      onDragStart={handleDragStart}
+                      onDragMove={handleDragMove}
+                      onDragEnd={handleDragEnd}
+                      onDragCancel={handleDragCancel}
+                    />
+                  </View>
+                  {showAfterIndicator || (isHoveringTask && isLast && hoverTarget.position === "after") ? (
+                    <View style={[styles.dropIndicator, styles.dropIndicatorAfter]} />
+                  ) : null}
+                </View>
               );
             })}
             <AddTaskInput placeholder="Add a task" onSubmit={(title) => onAddTask(day.key, title)} />
@@ -276,6 +363,7 @@ type DraggableBoardTaskCardProps = {
   onOpenTask: (task: LocalTask) => void;
   badgeText?: string | null;
   detailText?: string | null;
+  showGrabHandle?: boolean;
   onDragStart: (task: LocalTask, x: number, y: number) => void;
   onDragMove: (x: number, y: number) => void;
   onDragEnd: (x: number, y: number) => void;
@@ -288,6 +376,7 @@ function DraggableBoardTaskCard({
   onOpenTask,
   badgeText,
   detailText,
+  showGrabHandle = false,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -332,7 +421,14 @@ function DraggableBoardTaskCard({
 
   return (
     <GestureDetector gesture={gesture}>
-      <TaskCard task={task} onToggleStatus={onToggleStatus} onPress={handlePress} badgeText={badgeText} detailText={detailText} />
+      <TaskCard
+        task={task}
+        onToggleStatus={onToggleStatus}
+        onPress={handlePress}
+        badgeText={badgeText}
+        detailText={detailText}
+        showGrabHandle={showGrabHandle}
+      />
     </GestureDetector>
   );
 }
