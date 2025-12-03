@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { TaskDetailView, type TaskDetailViewHandle } from "../../../../components/data-display/TaskDetailView";
@@ -18,7 +18,12 @@ export function PlannerTaskDetailModal({ task, onClose, onDeleteTask }: PlannerT
   const { colors } = useTheme();
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
   const detailRef = useRef<TaskDetailViewHandle | null>(null);
+
+  useEffect(() => {
+    setHasChanges(false);
+  }, [task?.id]);
 
   const handleDelete = useCallback(async () => {
     if (!task?.id || deleting) return;
@@ -60,8 +65,12 @@ export function PlannerTaskDetailModal({ task, onClose, onDeleteTask }: PlannerT
                     setSaving(false);
                   }
                 }}
-                style={[styles.taskDetailActionButton, styles.taskDetailSave, (saving || deleting) && styles.taskDetailSaveDisabled]}
-                disabled={saving || deleting}
+                style={[
+                  styles.taskDetailActionButton,
+                  styles.taskDetailSave,
+                  (saving || deleting || !hasChanges) && styles.taskDetailSaveDisabled,
+                ]}
+                disabled={saving || deleting || !hasChanges}
               >
                 {saving ? (
                   <ActivityIndicator size="small" color={colors.primaryText} />
@@ -76,6 +85,7 @@ export function PlannerTaskDetailModal({ task, onClose, onDeleteTask }: PlannerT
               ref={detailRef}
               taskId={task.id}
               initialTask={task}
+              onDirtyChange={setHasChanges}
               scrollStyle={styles.taskDetailScroll}
               contentStyle={styles.taskDetailContent}
             />

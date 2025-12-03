@@ -46,6 +46,7 @@ type Props = {
   initialTask?: Partial<LocalTask | TaskWindowRow>;
   scrollStyle?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
+  onDirtyChange?: (dirty: boolean) => void;
 };
 
 type SectionKey = "title" | "notes" | "list" | "schedule" | "subtasks";
@@ -147,7 +148,7 @@ export type TaskDetailViewHandle = {
 };
 
 export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function TaskDetailView(
-  { taskId, initialTask, scrollStyle, contentStyle }: Props,
+  { taskId, initialTask, scrollStyle, contentStyle, onDirtyChange }: Props,
   ref,
 ) {
   const queryClient = useQueryClient();
@@ -201,6 +202,11 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
   const [repeatModalOpen, setRepeatModalOpen] = useState(false);
   const recurrencePromptResolver = useRef<(() => void) | null>(null);
   const [recurrencePrompt, setRecurrencePrompt] = useState<Partial<LocalTask> | null>(null);
+
+  const markDirty = (next: boolean) => {
+    setHasPendingEdits(next);
+    onDirtyChange?.(next);
+  };
 
   const buildTimeRangeForDate = (dateKey: string) => {
     const startParsed = parseTimeInput(startTimeInput);
@@ -460,11 +466,11 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
       const changes = buildChangeSet();
       if (changes === null) return;
       if (!Object.keys(changes).length) {
-        setHasPendingEdits(false);
+        markDirty(false);
         return;
       }
       await saveChangesWithScope(changes);
-      setHasPendingEdits(false);
+      markDirty(false);
     },
   }));
 
@@ -547,7 +553,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
   function handleSelectList(listId: string) {
     if (listAssignment === listId) return;
     setListAssignment(listId);
-    setHasPendingEdits(true);
+    markDirty(true);
   }
 
   function openPicker(kind: PickerType) {
@@ -615,7 +621,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
       setStartTimeInput("");
       setEndTimeInput("");
     }
-    setHasPendingEdits(true);
+    markDirty(true);
   }
 
   function handlePickStartTime(next: Date) {
@@ -653,7 +659,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
       nextEnd = new Date(nextStart.getTime() + 60 * 60 * 1000);
     }
     setEndTimeInput(nextEnd ? formatTimeInputValue(nextEnd.toISOString()) : "");
-    setHasPendingEdits(true);
+    markDirty(true);
   }
 
   function handlePickEndTime(next: Date) {
@@ -674,7 +680,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
       return;
     }
     setEndTimeInput(formatTimeInputValue(nextEnd.toISOString()));
-    setHasPendingEdits(true);
+    markDirty(true);
   }
 
   function commitPendingPicker() {
@@ -716,7 +722,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
     setStartTimeInput("");
     setEndTimeInput("");
     closePicker();
-    setHasPendingEdits(true);
+    markDirty(true);
   }
 
   const toggleSection = (key: SectionKey) => {
@@ -987,7 +993,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
           value={title}
           onChangeText={(value) => {
             setTitle(value);
-            setHasPendingEdits(true);
+            markDirty(true);
           }}
           onFocus={() => setIsEditing(true)}
           onBlur={() => setIsEditing(false)}
@@ -996,7 +1002,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
           style={[styles.statusButton, status === "done" && styles.statusDone]}
           onPress={() => {
             setStatus((current) => (current === "done" ? "todo" : "done"));
-            setHasPendingEdits(true);
+            markDirty(true);
           }}
         >
           <Text style={styles.statusText}>{status === "done" ? "Mark Todo" : "Mark Done"}</Text>
@@ -1017,7 +1023,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
           value={notes}
           onChangeText={(value) => {
             setNotes(value);
-            setHasPendingEdits(true);
+            markDirty(true);
           }}
           onFocus={() => setIsEditing(true)}
           onBlur={() => setIsEditing(false)}
