@@ -1,12 +1,4 @@
-create extension if not exists "uuid-ossp";
-
-create or replace function public.uuid_v5(namespace uuid, name text)
-returns uuid
-language sql
-immutable
-as $$
-  select uuid_generate_v5(namespace, name);
-$$;
+-- Show the template task again when its recurrence is inactive.
 
 create or replace function public.get_tasks_window(_start date, _end date)
 returns table (

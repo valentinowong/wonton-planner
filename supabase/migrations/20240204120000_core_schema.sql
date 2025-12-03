@@ -70,7 +70,7 @@ create table public.task_labels (
 -- Recurrences
 create table public.recurrences (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users on delete cascade,
+  user_id uuid not null references auth.users on delete cascade default auth.uid(),
   title text not null,
   notes text,
   list_id uuid references public.lists(id) on delete set null,
@@ -91,6 +91,7 @@ create index recurrences_user_active_start_idx on public.recurrences(user_id, ac
 create table public.recurrence_occurrences (
   recurrence_id uuid not null references public.recurrences(id) on delete cascade,
   occurrence_date date not null,
+  moved_to_date date,
   status task_status default 'todo',
   title text,
   notes text,

@@ -1,13 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
-import { Provider as PaperProvider } from "react-native-paper";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { pushOutbox, subscribeToRealtime } from "../src/lib/sync";
-import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
-import { ThemeProvider, useTheme } from "../src/contexts/ThemeContext";
-import { QueryProvider } from "../src/lib/queryClient";
+import { AppProviders } from "../src/core/providers";
+import { pushOutbox, subscribeToRealtime } from "../src/data/sync";
+import { useAuth } from "../src/features/auth/context/AuthContext";
+import { useTheme } from "../src/theme/ThemeContext";
 
 function AppSyncBridge() {
   const queryClient = useQueryClient();
@@ -45,17 +43,14 @@ function Navigator() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
+      
       <Stack.Protected guard={!isLoggedIn}>
-        <Stack.Screen name="index" />
         <Stack.Screen name="(auth)/sign-in" options={{ title: "Sign In" }} />
         <Stack.Screen name="(auth)/sign-up" options={{ title: "Create Account" }} />
       </Stack.Protected>
 
       <Stack.Protected guard={isLoggedIn}>
-        <Stack.Screen name="(drawer)" />
-        <Stack.Screen name="task/[id]" options={{ title: "Task", presentation: "modal" }} />
-        <Stack.Screen name="recurrence/new" options={{ title: "New Recurrence" }} />
-        <Stack.Screen name="recurrence/[id]" options={{ title: "Edit Recurrence" }} />
+        <Stack.Screen name="index" />
       </Stack.Protected>
     </Stack>
   );
@@ -63,18 +58,10 @@ function Navigator() {
 
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryProvider>
-        <AuthProvider>
-          <ThemeProvider>
-            <PaperProvider>
-              <AppSyncBridge />
-              <Navigator />
-            </PaperProvider>
-          </ThemeProvider>
-        </AuthProvider>
-      </QueryProvider>
-    </GestureHandlerRootView>
+    <AppProviders>
+      <AppSyncBridge />
+      <Navigator />
+    </AppProviders>
   );
 }
 

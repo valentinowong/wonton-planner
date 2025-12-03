@@ -1,13 +1,13 @@
+import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { useRouter } from "expo-router";
-import { useAuth } from "../../src/contexts/AuthContext";
-import { useTheme } from "../../src/contexts/ThemeContext";
+import { useAuth } from "../../src/features/auth/context/AuthContext";
 import type { ThemeColors } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeContext";
 
 export default function SignInScreen() {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { signIn, session, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,7 +22,7 @@ export default function SignInScreen() {
     setLoading(true);
     try {
       await signIn({ email: email.trim().toLowerCase(), password });
-      router.replace("/(drawer)/lists");
+      router.replace("/");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to sign in";
       Alert.alert("Sign in failed", message);

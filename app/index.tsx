@@ -1,7 +1,7 @@
-import { Redirect } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
-import { useAuth } from "../src/contexts/AuthContext";
-import { useTheme } from "../src/contexts/ThemeContext";
+import { useAuth } from "../src/features/auth/context/AuthContext";
+import ListsScreen from "../src/features/planner/screens/ListsScreen";
+import { useTheme } from "../src/theme/ThemeContext";
 
 export default function Index() {
   const { session, loading } = useAuth();
@@ -22,5 +22,5 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={session ? "/(drawer)/lists" : "/(auth)/sign-in"} />;
+  return <ListsScreen />;
 }

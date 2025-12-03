@@ -1,12 +1,4 @@
-create extension if not exists "uuid-ossp";
-
-create or replace function public.uuid_v5(namespace uuid, name text)
-returns uuid
-language sql
-immutable
-as $$
-  select uuid_generate_v5(namespace, name);
-$$;
+-- Update get_tasks_window to honor recurrence template_task_id and exclude template tasks from base list.
 
 create or replace function public.get_tasks_window(_start date, _end date)
 returns table (
@@ -109,9 +101,7 @@ as $$
       and t.due_date between _start and _end
       and not exists (
         select 1 from public.recurrences r
-        where r.template_task_id = t.id
-          and r.user_id = auth.uid()
-          and r.active
+        where r.template_task_id = t.id and r.user_id = auth.uid()
       )
 
     union all

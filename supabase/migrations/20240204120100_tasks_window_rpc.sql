@@ -25,7 +25,8 @@ returns table (
   sort_index int,
   is_recurring boolean,
   recurrence_id uuid,
-  occurrence_date date
+  occurrence_date date,
+  moved_to_date date
 )
 security definer
 set search_path = public
@@ -43,7 +44,7 @@ as $$
       coalesce(occ.title, r.title) as title,
       coalesce(occ.notes, r.notes) as notes,
       coalesce(occ.status, 'todo') as status,
-      d.day as due_date,
+      coalesce(occ.moved_to_date, d.day) as due_date,
       coalesce(occ.planned_start, null) as planned_start,
       coalesce(occ.planned_end, null) as planned_end,
       r.estimate_minutes,
@@ -53,6 +54,7 @@ as $$
       true as is_recurring,
       r.id as recurrence_id,
       d.day as occurrence_date,
+      occ.moved_to_date,
       occ.skip
     from public.recurrences r
     join window_days d on d.day between _start and _end
@@ -98,7 +100,8 @@ as $$
       t.sort_index,
       false as is_recurring,
       null::uuid as recurrence_id,
-      null::date as occurrence_date
+      null::date as occurrence_date,
+      null::date as moved_to_date
     from public.tasks t
     where t.user_id = auth.uid()
       and t.due_date between _start and _end
@@ -121,7 +124,8 @@ as $$
       e.sort_index,
       e.is_recurring,
       e.recurrence_id,
-      e.occurrence_date
+      e.occurrence_date,
+      e.moved_to_date
     from expanded e
   ) combined
   order by due_date, sort_index, priority desc;
