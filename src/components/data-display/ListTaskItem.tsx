@@ -72,7 +72,7 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
   const unscheduledTint = withAlpha(colors.textMuted, mode === "dark" ? 0.14 : 0.08);
   const dateOnlyTint = withAlpha(colors.primary, mode === "dark" ? 0.14 : 0.07);
   const timedTint = withAlpha(colors.primary, mode === "dark" ? 0.22 : 0.12);
-  const dateOnlyBorder = mode === "light" ? "#7fb3ff" : "#4c8dff";
+  const dateOnlyBorder = withAlpha(colors.primary, mode === "dark" ? 0.85 : 0.55);
   return StyleSheet.create({
     card: {
       flexDirection: "row",
@@ -116,8 +116,8 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       marginRight: 12,
     },
     checkboxDone: {
-      backgroundColor: colors.successAlt,
-      borderColor: colors.successAlt,
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
     },
     content: {
       flex: 1,

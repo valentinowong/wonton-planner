@@ -404,7 +404,7 @@ export function PlannerWeekCalendarGrid({
                         <Ionicons
                           name={dragState.task.status === "done" ? "checkmark-circle" : "ellipse-outline"}
                           size={14}
-                          color={dragState.task.status === "done" ? colors.successAlt : colors.textSecondary}
+                          color={dragState.task.status === "done" ? colors.primary : colors.textSecondary}
                         />
                       </View>
                     </View>
@@ -702,7 +702,7 @@ function CalendarGridTask({
             <Ionicons
               name={task.status === "done" ? "checkmark-circle" : "ellipse-outline"}
               size={14}
-              color={task.status === "done" ? colors.successAlt : colors.textSecondary}
+              color={task.status === "done" ? colors.primary : colors.textSecondary}
             />
           </Pressable>
         </Pressable>

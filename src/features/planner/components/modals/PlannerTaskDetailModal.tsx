@@ -187,7 +187,7 @@ export function PlannerTaskDetailModal({ task, onClose, onDeleteTask, onShowToas
                 ) : null}
                 {!hasChanges && justSaved ? (
                   <View style={[styles.taskDetailStatusPill, styles.taskDetailStatusSaved]}>
-                    <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                    <Ionicons name="checkmark-circle" size={14} color={colors.primary} />
                     <Text style={styles.taskDetailStatusText}>Saved</Text>
                   </View>
                 ) : null}

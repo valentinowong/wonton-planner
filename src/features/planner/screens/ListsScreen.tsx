@@ -1299,6 +1299,9 @@ function createStyles(colors: ThemeColors) {
           elevation: Math.max(1, Math.round(radius)),
         };
   const calendarBorder = colors.border === "#e2e8f0" ? "#cbd5e1" : colors.border;
+  const isDark = isDarkColor(colors.background);
+  const calendarTaskBg = withAlpha(colors.primary, isDark ? 0.24 : 0.12);
+  const calendarTaskBorder = withAlpha(colors.primary, isDark ? 0.85 : 0.7);
   return StyleSheet.create({
   safe: {
     flex: 1,
@@ -1788,7 +1791,9 @@ function createStyles(colors: ThemeColors) {
   calendarBlock: {
     borderRadius: 12,
     padding: 8,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: calendarTaskBg,
+    borderWidth: 1,
+    borderColor: calendarTaskBorder,
     position: "relative",
   },
   calendarBlockContent: {
@@ -1813,8 +1818,8 @@ function createStyles(colors: ThemeColors) {
   calendarBlockDragging: {
     opacity: 1,
     borderWidth: 2,
-    borderColor: colors.accent,
-    ...nativeShadow(colors.accent, 0.25, 10, 4),
+    borderColor: colors.primary,
+    ...nativeShadow(colors.primary, 0.25, 10, 4),
     ...webShadow("0 6px 14px rgba(0,0,0,0.25)"),
   },
   calendarResizeHandle: {
@@ -2405,6 +2410,25 @@ function createStyles(colors: ThemeColors) {
     fontWeight: "700",
   },
   });
+}
+
+function withAlpha(hex: string, alpha: number) {
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6) return hex;
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function isDarkColor(hex: string) {
+  const normalized = hex.replace("#", "");
+  if (normalized.length !== 6) return false;
+  const r = parseInt(normalized.slice(0, 2), 16) / 255;
+  const g = parseInt(normalized.slice(2, 4), 16) / 255;
+  const b = parseInt(normalized.slice(4, 6), 16) / 255;
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luminance < 0.5;
 }
 
 function computeBacklogSortIndex(

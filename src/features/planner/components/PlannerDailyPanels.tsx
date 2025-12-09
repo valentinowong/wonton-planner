@@ -785,7 +785,7 @@ function DailyScheduleTask({
             <Ionicons
               name={task.status === "done" ? "checkmark-circle" : "ellipse-outline"}
               size={14}
-              color={task.status === "done" ? colors.successAlt : colors.textSecondary}
+              color={task.status === "done" ? colors.primary : colors.textSecondary}
             />
           </Pressable>
         </Pressable>

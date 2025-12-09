@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Switch, Text, TextInput, View, Platform } from "react-native";
 import { SegmentedControl } from "../../../../components/ui/SegmentedControl";
 import { useAuth } from "../../../auth/context/AuthContext";
 import { useTheme } from "../../../../theme/ThemeContext";
+import type { ThemeAccent } from "../../../../theme";
 import { usePlannerStyles } from "../../state/PlannerStylesContext";
 
 export type PlannerSettingsModalProps = {
@@ -37,7 +38,7 @@ export function PlannerSettingsModal({
     { key: "app", label: "App Settings" },
   ] as const;
   const styles = usePlannerStyles();
-  const { colors, preference, setPreference } = useTheme();
+  const { colors, preference, setPreference, accent, setAccent, mode } = useTheme();
   const [activeSection, setActiveSection] = useState<"account" | "app">("account");
   const [displayNameInput, setDisplayNameInput] = useState(displayName);
   const [emailInput, setEmailInput] = useState(userEmail);
@@ -203,6 +204,22 @@ export function PlannerSettingsModal({
                         ]}
                         onChange={(next) => setPreference(next as typeof preference)}
                       />
+                      <View style={styles.settingsFormGroup}>
+                        <Text style={styles.settingsLabel}>Accent color</Text>
+                        <SegmentedControl
+                          size="sm"
+                          value={accent}
+                          options={[
+                            { label: "Red", value: "red" },
+                            { label: "Orange", value: "orange" },
+                            { label: "Yellow", value: "yellow" },
+                            { label: "Green", value: "green" },
+                            { label: "Blue", value: "blue" },
+                            { label: "Purple", value: "purple" },
+                          ]}
+                          onChange={(next) => setAccent(next as ThemeAccent)}
+                        />
+                      </View>
                     </View>
                     <View style={styles.settingsCard}>
                       <Text style={styles.settingsCardTitle}>Inbox & Lists</Text>
@@ -226,8 +243,7 @@ export function PlannerSettingsModal({
                         <Switch
                           value={rolloverEnabled}
                           onValueChange={setRolloverEnabled}
-                          thumbColor={colors.surface}
-                          trackColor={{ true: colors.accent, false: colors.borderMuted }}
+                          {...getSwitchColors({ value: rolloverEnabled, colors, mode })}
                         />
                       </View>
                       <View style={[styles.settingsRow, !rolloverEnabled && styles.settingsRowDisabled]}>
@@ -252,8 +268,7 @@ export function PlannerSettingsModal({
                         <Switch
                           value={moveCompletedToBottom}
                           onValueChange={setMoveCompletedToBottom}
-                          thumbColor={colors.surface}
-                          trackColor={{ true: colors.accent, false: colors.borderMuted }}
+                          {...getSwitchColors({ value: moveCompletedToBottom, colors, mode })}
                         />
                       </View>
                       <View style={styles.settingsSwitchRow}>
@@ -261,8 +276,7 @@ export function PlannerSettingsModal({
                         <Switch
                           value={completeOnSubtasks}
                           onValueChange={setCompleteOnSubtasks}
-                          thumbColor={colors.surface}
-                          trackColor={{ true: colors.accent, false: colors.borderMuted }}
+                          {...getSwitchColors({ value: completeOnSubtasks, colors, mode })}
                         />
                       </View>
                       <View style={styles.settingsSwitchRow}>
@@ -270,8 +284,7 @@ export function PlannerSettingsModal({
                         <Switch
                           value={autoActualTime}
                           onValueChange={setAutoActualTime}
-                          thumbColor={colors.surface}
-                          trackColor={{ true: colors.accent, false: colors.borderMuted }}
+                          {...getSwitchColors({ value: autoActualTime, colors, mode })}
                         />
                       </View>
                     </View>
@@ -302,4 +315,44 @@ export function PlannerSettingsModal({
       </Pressable>
     </Modal>
   );
+}
+
+function accentTrackColor(primary: string, mode: "light" | "dark") {
+  const alpha = mode === "dark" ? 0.4 : 0.35;
+  const normalized = primary.replace("#", "");
+  if (normalized.length !== 6) return primary;
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getSwitchColors({
+  value,
+  colors,
+  mode,
+}: {
+  value: boolean;
+  colors: ReturnType<typeof useTheme>["colors"];
+  mode: "light" | "dark";
+}) {
+  const trackOn = accentTrackColor(colors.primary, mode);
+  const trackOff = colors.borderMuted;
+  const thumbOn = colors.primary;
+  const thumbOff = colors.surface;
+
+  if (Platform.OS === "web") {
+    return {
+      thumbColor: value ? thumbOn : trackOff,
+      trackColor: { false: trackOff, true: trackOn },
+      activeThumbColor: thumbOn,
+      activeTrackColor: trackOn,
+    };
+  }
+
+  return {
+    thumbColor: value ? thumbOn : thumbOff,
+    trackColor: { false: trackOff, true: trackOn },
+    ios_backgroundColor: trackOff,
+  };
 }

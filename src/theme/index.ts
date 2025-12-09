@@ -1,5 +1,6 @@
 export type ThemeMode = "light" | "dark";
 export type ThemePreference = ThemeMode | "system";
+export type ThemeAccent = "red" | "orange" | "yellow" | "green" | "blue" | "purple";
 
 export type ThemeColors = {
   background: string;
@@ -115,3 +116,36 @@ export const themes: Record<ThemeMode, ThemeShape> = {
   light: { mode: "light", colors: lightColors },
   dark: { mode: "dark", colors: darkColors },
 };
+
+const accentPalettes: Record<ThemeAccent, { light: Partial<ThemeColors>; dark: Partial<ThemeColors> }> = {
+  red: {
+    light: { primary: "#ef4444", primaryText: "#ffffff", accent: "#ef4444", accentMuted: "#fecdd3" },
+    dark: { primary: "#f87171", primaryText: "#05050b", accent: "#f87171", accentMuted: "#fca5a5" },
+  },
+  orange: {
+    light: { primary: "#f97316", primaryText: "#ffffff", accent: "#f97316", accentMuted: "#fed7aa" },
+    dark: { primary: "#fb923c", primaryText: "#05050b", accent: "#fb923c", accentMuted: "#fdba74" },
+  },
+  yellow: {
+    light: { primary: "#f59e0b", primaryText: "#0f172a", accent: "#f59e0b", accentMuted: "#fef08a" },
+    dark: { primary: "#facc15", primaryText: "#0f172a", accent: "#facc15", accentMuted: "#fef08a" },
+  },
+  green: {
+    light: { primary: "#22c55e", primaryText: "#ffffff", accent: "#22c55e", accentMuted: "#bbf7d0" },
+    dark: { primary: "#4ade80", primaryText: "#05050b", accent: "#4ade80", accentMuted: "#bbf7d0" },
+  },
+  blue: {
+    light: { primary: "#2563eb", primaryText: "#ffffff", accent: "#2563eb", accentMuted: "#bfdbfe" },
+    dark: { primary: "#4c8dff", primaryText: "#05050b", accent: "#4c8dff", accentMuted: "#bfdbfe" },
+  },
+  purple: {
+    light: { primary: "#7c3aed", primaryText: "#ffffff", accent: "#7c3aed", accentMuted: "#ddd6fe" },
+    dark: { primary: "#a78bfa", primaryText: "#05050b", accent: "#a78bfa", accentMuted: "#ddd6fe" },
+  },
+};
+
+export function buildThemeColors(mode: ThemeMode, accent: ThemeAccent): ThemeColors {
+  const base = themes[mode].colors;
+  const overrides = accentPalettes[accent][mode];
+  return { ...base, ...overrides };
+}

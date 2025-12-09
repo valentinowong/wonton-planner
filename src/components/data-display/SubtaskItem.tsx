@@ -46,8 +46,8 @@ function createStyles(colors: ThemeColors) {
       marginRight: 12,
     },
     checkboxDone: {
-      backgroundColor: colors.success,
-      borderColor: colors.success,
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
     },
     input: {
       flex: 1,
