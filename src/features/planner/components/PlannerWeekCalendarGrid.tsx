@@ -10,6 +10,7 @@ import { formatHourLabel, HOURS, HOUR_BLOCK_HEIGHT, CALENDAR_DAY_WIDTH } from ".
 import { getTaskTimeMetrics } from "../utils/taskTime";
 import { resolvePlannerDropTarget, type PlannerDropTarget, type PlannerListHoverTarget } from "./drag/dropTargets";
 import type { PlannerDragPreview } from "../types";
+import { isOtherOrUnassigned } from "../utils/assignee";
 
 type PositionedTask = {
   id: string;
@@ -73,6 +74,8 @@ type PlannerWeekCalendarGridProps = {
     position?: "before" | "after",
   ) => void | Promise<void>;
   externalPreview?: { task: LocalTask; dayKey: string; startMinutes: number } | null;
+  showAssigneeChips?: boolean;
+  currentUserId: string | null;
 };
 
 export function PlannerWeekCalendarGrid({
@@ -93,6 +96,8 @@ export function PlannerWeekCalendarGrid({
   onDropTaskOnDay,
   onDropTaskOnList,
   externalPreview,
+  showAssigneeChips = true,
+  currentUserId,
 }: PlannerWeekCalendarGridProps) {
   const styles = usePlannerStyles();
   const { colors } = useTheme();
@@ -365,6 +370,13 @@ export function PlannerWeekCalendarGrid({
           </View>
           {days.map((day) => {
             const dayTasks = (tasksByDay[day.key] ?? []).filter((task) => Boolean(task.planned_start));
+            const activeDrag =
+              dragState && dragState.originDayKey !== day.key && dragState.currentDayKey === day.key ? dragState : null;
+            const dragAssigneeMeta = activeDrag ? getAssigneeMeta(activeDrag.task) : null;
+            const activePreview = externalPreview && externalPreview.dayKey === day.key ? externalPreview : null;
+            const previewAssigneeMeta = activePreview ? getAssigneeMeta(activePreview.task) : null;
+            const dragMuted = activeDrag ? isOtherOrUnassigned(activeDrag.task, currentUserId) : false;
+            const previewMuted = activePreview ? isOtherOrUnassigned(activePreview.task, currentUserId) : false;
             return (
               <View
                 key={day.key}
@@ -385,50 +397,86 @@ export function PlannerWeekCalendarGrid({
                       onPress={() => (pendingTask ? onDropPendingIntoSlot(day.key, hour) : undefined)}
                     />
                   ))}
-                  {dragState && dragState.originDayKey !== day.key && dragState.currentDayKey === day.key ? (
+                  {activeDrag ? (
                     <View
                       style={[
                         styles.calendarBlock,
+                        dragMuted && styles.calendarBlockMuted,
                         styles.calendarBlockFloating,
                         styles.calendarBlockDragging,
                         {
-                          top: (dragState.currentStart / 60) * HOUR_BLOCK_HEIGHT,
-                          height: Math.max(28, (dragState.durationMinutes / 60) * HOUR_BLOCK_HEIGHT),
+                          top: (activeDrag.currentStart / 60) * HOUR_BLOCK_HEIGHT,
+                          height: Math.max(28, (activeDrag.durationMinutes / 60) * HOUR_BLOCK_HEIGHT),
                         },
                         Platform.OS === "web" ? { pointerEvents: "none" } : null,
                       ]}
                       pointerEvents={Platform.OS === "web" ? undefined : "none"}
                     >
                       <View style={styles.calendarBlockContent}>
-                        <Text style={styles.calendarBlockText}>{dragState.task.title}</Text>
+                        {showAssigneeChips && dragAssigneeMeta ? (
+                          <View
+                            style={styles.calendarAssigneeChip}
+                            accessibilityLabel={`Assignee: ${dragAssigneeMeta.assigneeLabel}`}
+                          >
+                            {dragAssigneeMeta.hasAssignee ? (
+                              dragAssigneeMeta.assigneeInitials ? (
+                                <Text style={styles.calendarAssigneeText}>{dragAssigneeMeta.assigneeInitials}</Text>
+                              ) : (
+                                <Ionicons name="person" size={12} color={colors.textSecondary} />
+                              )
+                            ) : (
+                              <Ionicons name="person-outline" size={12} color={colors.textSecondary} />
+                            )}
+                          </View>
+                        ) : null}
+                        <Text style={styles.calendarBlockText}>{activeDrag.task.title}</Text>
                         <Ionicons
-                          name={dragState.task.status === "done" ? "checkmark-circle" : "ellipse-outline"}
+                          name={activeDrag.task.status === "done" ? "checkmark-circle" : "ellipse-outline"}
                           size={14}
-                          color={dragState.task.status === "done" ? colors.primary : colors.textSecondary}
+                          color={activeDrag.task.status === "done" ? colors.primary : colors.textSecondary}
                         />
                       </View>
                     </View>
                   ) : null}
-                  {externalPreview && externalPreview.dayKey === day.key ? (
+                  {activePreview ? (
                     <View
                       style={[
                         styles.calendarBlock,
+                        previewMuted && styles.calendarBlockMuted,
                         styles.calendarBlockFloating,
                         styles.calendarBlockDragging,
                         {
-                          top: (externalPreview.startMinutes / 60) * HOUR_BLOCK_HEIGHT,
+                          top: (activePreview.startMinutes / 60) * HOUR_BLOCK_HEIGHT,
                           height: Math.max(
                             28,
-                            ((getTaskPreviewDuration(externalPreview.task) / 60) || 1) * HOUR_BLOCK_HEIGHT,
+                            ((getTaskPreviewDuration(activePreview.task) / 60) || 1) * HOUR_BLOCK_HEIGHT,
                           ),
                         },
                         Platform.OS === "web" ? { pointerEvents: "none" } : null,
                       ]}
                       pointerEvents={Platform.OS === "web" ? undefined : "none"}
                     >
-                      <Text style={styles.calendarBlockText} numberOfLines={2}>
-                        {externalPreview.task.title}
-                      </Text>
+                      <View style={styles.calendarBlockContent}>
+                        {showAssigneeChips && previewAssigneeMeta ? (
+                          <View
+                            style={styles.calendarAssigneeChip}
+                            accessibilityLabel={`Assignee: ${previewAssigneeMeta.assigneeLabel}`}
+                          >
+                            {previewAssigneeMeta.hasAssignee ? (
+                              previewAssigneeMeta.assigneeInitials ? (
+                                <Text style={styles.calendarAssigneeText}>{previewAssigneeMeta.assigneeInitials}</Text>
+                              ) : (
+                                <Ionicons name="person" size={12} color={colors.textSecondary} />
+                              )
+                            ) : (
+                              <Ionicons name="person-outline" size={12} color={colors.textSecondary} />
+                            )}
+                          </View>
+                        ) : null}
+                        <Text style={styles.calendarBlockText} numberOfLines={2}>
+                          {activePreview.task.title}
+                        </Text>
+                      </View>
                     </View>
                   ) : null}
                 </View>
@@ -485,6 +533,7 @@ export function PlannerWeekCalendarGrid({
                     const columnWidth = CALENDAR_DAY_WIDTH / layout.columns;
                     const width = Math.max(40, columnWidth - gutter);
                     const left = layout.column * columnWidth + gutter / 2;
+                    const muted = isOtherOrUnassigned(task, currentUserId);
                       return (
                         <CalendarGridTask
                           key={task.id}
@@ -502,15 +551,17 @@ export function PlannerWeekCalendarGrid({
                         onToggleTask={onToggleTask}
                         beginDrag={beginDrag}
                         handleDragMove={handleDragMove}
-                        finishDrag={finishDrag}
-                        beginResize={beginResize}
-                        handleResizeMove={handleResizeMove}
-                        finishResize={finishResize}
+                          finishDrag={finishDrag}
+                          beginResize={beginResize}
+                          handleResizeMove={handleResizeMove}
+                          finishResize={finishResize}
                           isDragging={Boolean(dragState?.task.id === task.id && dragState.dragging)}
                           isResizing={Boolean(resizingActive)}
                           hidden={hidden}
                           width={width}
                           left={left}
+                          showAssigneeChip={showAssigneeChips}
+                          muted={muted}
                         />
                       );
                     });
@@ -579,6 +630,36 @@ function getTaskPreviewDuration(task: LocalTask): number {
   return task.estimate_minutes ?? 60;
 }
 
+function getAssigneeMeta(task: LocalTask) {
+  let assigneeInitials: string | null = null;
+  if (task.assignee_id) {
+    const source = task.assignee_display_name || task.assignee_email || "";
+    const parts = source
+      .replace(/[^A-Za-z0-9 ]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (parts.length === 0 && task.assignee_email) {
+      const emailName = task.assignee_email.split("@")[0];
+      const emailPart = emailName.replace(/[^A-Za-z0-9]/g, "").slice(0, 2);
+      assigneeInitials = emailPart.toUpperCase() || null;
+    } else {
+      const first = parts[0]?.[0] ?? "";
+      const last = parts.length > 1 ? parts[parts.length - 1][0] : parts[0]?.[1] ?? "";
+      const initials = `${first}${last}`.toUpperCase().slice(0, 2);
+      assigneeInitials = initials || null;
+    }
+  }
+  const assigneeLabel = task.assignee_display_name
+    ? task.assignee_display_name
+    : task.assignee_email
+    ? task.assignee_email
+    : task.assignee_id
+    ? "Assigned"
+    : "Unassigned";
+  return { assigneeInitials, assigneeLabel, hasAssignee: Boolean(task.assignee_id) };
+}
+
 type CalendarGridTaskProps = {
   task: LocalTask;
   dayKey: string;
@@ -603,6 +684,8 @@ type CalendarGridTaskProps = {
   isDragging: boolean;
   isResizing: boolean;
   hidden: boolean;
+  showAssigneeChip: boolean;
+  muted: boolean;
 };
 
 function CalendarGridTask({
@@ -629,8 +712,15 @@ function CalendarGridTask({
   isDragging,
   isResizing,
   hidden,
+  showAssigneeChip,
+  muted,
 }: CalendarGridTaskProps) {
   const shouldSkipNextPressRef = useRef(false);
+  const { assigneeInitials, assigneeLabel, hasAssignee } = useMemo(() => getAssigneeMeta(task), [
+    task.assignee_display_name,
+    task.assignee_email,
+    task.assignee_id,
+  ]);
   const dragGesture = useMemo(() => {
     let ended = false;
     return Gesture.Pan()
@@ -688,6 +778,7 @@ function CalendarGridTask({
       <View
         style={[
           styles.calendarBlock,
+          muted && styles.calendarBlockMuted,
           styles.calendarBlockFloating,
           dragActive && styles.calendarBlockDragging,
           { top, height, width, left, transform: [{ translateX }, { translateY }] },
@@ -697,6 +788,19 @@ function CalendarGridTask({
         pointerEvents={Platform.OS === "web" ? undefined : hidden ? "none" : "auto"}
       >
         <Pressable style={styles.calendarBlockContent} onPress={handlePress}>
+          {showAssigneeChip ? (
+            <View style={styles.calendarAssigneeChip} accessibilityLabel={`Assignee: ${assigneeLabel}`}>
+              {hasAssignee ? (
+                assigneeInitials ? (
+                  <Text style={styles.calendarAssigneeText}>{assigneeInitials}</Text>
+                ) : (
+                  <Ionicons name="person" size={12} color={colors.textSecondary} />
+                )
+              ) : (
+                <Ionicons name="person-outline" size={12} color={colors.textSecondary} />
+              )}
+            </View>
+          ) : null}
           <Text style={styles.calendarBlockText}>{task.title}</Text>
           <Pressable onPress={handleToggle}>
             <Ionicons

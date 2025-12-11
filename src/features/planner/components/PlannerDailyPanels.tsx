@@ -14,6 +14,7 @@ import { getTaskTimeMetrics } from "../utils/taskTime";
 import { formatDuration, formatTaskStartTime } from "../utils/taskDisplay";
 import { resolvePlannerDropTarget, type PlannerListHoverTarget } from "./drag/dropTargets";
 import type { PlannerDragPreview } from "../types";
+import { isOtherOrUnassigned } from "../utils/assignee";
 
 type PlannerDailyTaskPanelProps = {
   day: PlannerDay | undefined;
@@ -37,6 +38,8 @@ type PlannerDailyTaskPanelProps = {
     position?: "before" | "after",
   ) => void | Promise<void>;
   onDropTaskOnDay?: (task: LocalTask, dayKey: string, startMinutes?: number, endMinutes?: number) => void | Promise<void>;
+  showAssigneeChips?: boolean;
+  currentUserId: string | null;
 };
 
 export function PlannerDailyTaskPanel({
@@ -56,6 +59,8 @@ export function PlannerDailyTaskPanel({
   onCalendarPreviewChange,
   onDropTaskOnList,
   onDropTaskOnDay,
+  showAssigneeChips = true,
+  currentUserId,
 }: PlannerDailyTaskPanelProps) {
   const styles = usePlannerStyles();
   if (!day) return null;
@@ -190,6 +195,7 @@ export function PlannerDailyTaskPanel({
           const durationMinutes = metrics?.durationMinutes ?? task.estimate_minutes ?? null;
           const badgeText = durationMinutes ? formatDuration(durationMinutes) : null;
           const detailText = formatTaskStartTime(task);
+          const muted = isOtherOrUnassigned(task, currentUserId);
           return (
             <DraggableDailyTaskCard
               key={task.id}
@@ -202,6 +208,8 @@ export function PlannerDailyTaskPanel({
               onDragMove={handleDragMove}
               onDragEnd={handleDragEnd}
               onDragCancel={handleDragCancel}
+              showAssigneeChip={showAssigneeChips}
+              muted={muted}
             />
           );
         })}
@@ -233,6 +241,8 @@ type PlannerDailySchedulePanelProps = {
     targetTaskId?: string | null,
     position?: "before" | "after",
   ) => void | Promise<void>;
+  showAssigneeChips?: boolean;
+  currentUserId: string | null;
 };
 
 type PositionedTask = {
@@ -284,6 +294,8 @@ export function PlannerDailySchedulePanel({
   onListHoverChange,
   onDropTaskOnDay,
   onDropTaskOnList,
+  showAssigneeChips = true,
+  currentUserId,
 }: PlannerDailySchedulePanelProps) {
   const styles = usePlannerStyles();
   const { colors } = useTheme();
@@ -525,6 +537,7 @@ export function PlannerDailySchedulePanel({
               <View
                 style={[
                   styles.calendarBlock,
+                  isOtherOrUnassigned(externalPreview.task, currentUserId) && styles.calendarBlockMuted,
                   styles.calendarBlockFloating,
                   styles.calendarBlockDragging,
                   {
@@ -538,9 +551,32 @@ export function PlannerDailySchedulePanel({
                 ]}
                 pointerEvents={Platform.OS === "web" ? undefined : "none"}
               >
-                <Text style={styles.calendarBlockText} numberOfLines={2}>
-                  {externalPreview.task.title}
-                </Text>
+                {(() => {
+                  const previewAssigneeMeta = getAssigneeMeta(externalPreview.task);
+                  return (
+                    <View style={styles.calendarBlockContent}>
+                      {showAssigneeChips ? (
+                        <View
+                          style={styles.calendarAssigneeChip}
+                          accessibilityLabel={`Assignee: ${previewAssigneeMeta.assigneeLabel}`}
+                        >
+                          {previewAssigneeMeta.hasAssignee ? (
+                            previewAssigneeMeta.assigneeInitials ? (
+                              <Text style={styles.calendarAssigneeText}>{previewAssigneeMeta.assigneeInitials}</Text>
+                            ) : (
+                              <Ionicons name="person" size={12} color={colors.textSecondary} />
+                            )
+                          ) : (
+                            <Ionicons name="person-outline" size={12} color={colors.textSecondary} />
+                          )}
+                        </View>
+                      ) : null}
+                      <Text style={styles.calendarBlockText} numberOfLines={2}>
+                        {externalPreview.task.title}
+                      </Text>
+                    </View>
+                  );
+                })()}
               </View>
             ) : null}
             <View
@@ -589,9 +625,10 @@ export function PlannerDailySchedulePanel({
                 const columnWidth = availableWidth / layout.columns;
                 const width = Math.max(40, columnWidth - gutter);
                 const left = layout.column * columnWidth + gutter / 2;
-                  return (
-                    <DailyScheduleTask
-                      key={task.id}
+                const muted = isOtherOrUnassigned(task, currentUserId);
+                return (
+                  <DailyScheduleTask
+                    key={task.id}
                     task={task}
                     metrics={metrics}
                     top={top}
@@ -607,15 +644,17 @@ export function PlannerDailySchedulePanel({
                     beginDrag={beginDrag}
                     handleDragMove={handleDragMove}
                     finishDrag={finishDrag}
-                      beginResize={beginResize}
-                      handleResizeMove={handleResizeMove}
-                      finishResize={finishResize}
-                      width={width}
-                      left={left}
-                    />
-                  );
-                });
-              })()}
+                    beginResize={beginResize}
+                    handleResizeMove={handleResizeMove}
+                    finishResize={finishResize}
+                    width={width}
+                    left={left}
+                    showAssigneeChip={showAssigneeChips}
+                    muted={muted}
+                  />
+                );
+              });
+            })()}
             </View>
           </View>
         </View>
@@ -669,6 +708,36 @@ function clampMinutes(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function getAssigneeMeta(task: LocalTask) {
+  let assigneeInitials: string | null = null;
+  if (task.assignee_id) {
+    const source = task.assignee_display_name || task.assignee_email || "";
+    const parts = source
+      .replace(/[^A-Za-z0-9 ]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (parts.length === 0 && task.assignee_email) {
+      const emailName = task.assignee_email.split("@")[0];
+      const emailPart = emailName.replace(/[^A-Za-z0-9]/g, "").slice(0, 2);
+      assigneeInitials = emailPart.toUpperCase() || null;
+    } else {
+      const first = parts[0]?.[0] ?? "";
+      const last = parts.length > 1 ? parts[parts.length - 1][0] : parts[0]?.[1] ?? "";
+      const initials = `${first}${last}`.toUpperCase().slice(0, 2);
+      assigneeInitials = initials || null;
+    }
+  }
+  const assigneeLabel = task.assignee_display_name
+    ? task.assignee_display_name
+    : task.assignee_email
+    ? task.assignee_email
+    : task.assignee_id
+    ? "Assigned"
+    : "Unassigned";
+  return { assigneeInitials, assigneeLabel, hasAssignee: Boolean(task.assignee_id) };
+}
+
 type DailyScheduleTaskProps = {
   task: LocalTask;
   metrics: TaskMetrics;
@@ -695,6 +764,8 @@ type DailyScheduleTaskProps = {
   ) => void;
   handleResizeMove: (event: GestureResponderEvent) => void;
   finishResize: (commit: boolean) => void;
+  showAssigneeChip: boolean;
+  muted: boolean;
 };
 
 function DailyScheduleTask({
@@ -718,8 +789,15 @@ function DailyScheduleTask({
   beginResize,
   handleResizeMove,
   finishResize,
+  showAssigneeChip,
+  muted,
 }: DailyScheduleTaskProps) {
   const shouldSkipNextPressRef = useRef(false);
+  const { assigneeInitials, assigneeLabel, hasAssignee } = useMemo(() => getAssigneeMeta(task), [
+    task.assignee_display_name,
+    task.assignee_email,
+    task.assignee_id,
+  ]);
   const dragGesture = useMemo(() => {
     let ended = false;
     return Gesture.Pan()
@@ -766,6 +844,7 @@ function DailyScheduleTask({
       <View
         style={[
           styles.calendarBlock,
+          muted && styles.calendarBlockMuted,
           styles.calendarBlockFloating,
           dragActive && styles.calendarBlockDragging,
           { top, height, width, left, transform: [{ translateY }] },
@@ -775,6 +854,19 @@ function DailyScheduleTask({
         pointerEvents={Platform.OS === "web" ? undefined : hidden ? "none" : "auto"}
       >
         <Pressable style={styles.calendarBlockContent} onPress={Platform.OS === "web" ? handlePress : () => onOpenTask(task)}>
+          {showAssigneeChip ? (
+            <View style={styles.calendarAssigneeChip} accessibilityLabel={`Assignee: ${assigneeLabel}`}>
+              {hasAssignee ? (
+                assigneeInitials ? (
+                  <Text style={styles.calendarAssigneeText}>{assigneeInitials}</Text>
+                ) : (
+                  <Ionicons name="person" size={12} color={colors.textSecondary} />
+                )
+              ) : (
+                <Ionicons name="person-outline" size={12} color={colors.textSecondary} />
+              )}
+            </View>
+          ) : null}
           <Text style={styles.calendarBlockText}>{task.title}</Text>
           <Pressable
             onPress={(event) => {
@@ -822,6 +914,8 @@ type DraggableDailyTaskCardProps = {
   onDragMove: (x: number, y: number) => void;
   onDragEnd: (x: number, y: number) => void;
   onDragCancel: () => void;
+  showAssigneeChip?: boolean;
+  muted?: boolean;
 };
 
 function DraggableDailyTaskCard({
@@ -834,6 +928,8 @@ function DraggableDailyTaskCard({
   onDragMove,
   onDragEnd,
   onDragCancel,
+  showAssigneeChip = true,
+  muted = false,
 }: DraggableDailyTaskCardProps) {
   const shouldSkipNextPressRef = useRef(false);
 
@@ -874,7 +970,15 @@ function DraggableDailyTaskCard({
 
   return (
     <GestureDetector gesture={gesture}>
-      <TaskCard task={task} onToggleStatus={onToggleStatus} onPress={handlePress} badgeText={badgeText} detailText={detailText} />
+      <TaskCard
+        task={task}
+        onToggleStatus={onToggleStatus}
+        onPress={handlePress}
+        badgeText={badgeText}
+        detailText={detailText}
+        showAssigneeChip={showAssigneeChip}
+        muted={muted}
+      />
     </GestureDetector>
   );
 }

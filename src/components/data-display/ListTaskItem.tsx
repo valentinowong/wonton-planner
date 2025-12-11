@@ -15,6 +15,8 @@ type Props = {
   active?: boolean;
   showGrabHandle?: boolean;
   showAssigneeChip?: boolean;
+  muted?: boolean;
+  highlightMine?: boolean;
 };
 
 export function ListTaskItem({
@@ -26,6 +28,8 @@ export function ListTaskItem({
   active = false,
   showGrabHandle = false,
   showAssigneeChip = false,
+  muted = false,
+  highlightMine = false,
 }: Props) {
   const isDone = task.status === "done";
   const { colors, mode } = useTheme();
@@ -63,14 +67,28 @@ export function ListTaskItem({
   return (
     <Pressable
       onPress={() => onPress?.(task)}
-      style={[styles.card, styles[scheduleStyleKey], isDone && styles.cardDone, active && styles.cardActive]}
+      style={[
+        styles.card,
+        highlightMine && !muted ? styles.cardMine : styles[scheduleStyleKey],
+        muted && styles.cardMuted,
+        isDone && styles.cardDone,
+        active && styles.cardActive,
+      ]}
       dataSet={dataSet}
       collapsable={false}
     >
-      <Pressable onPress={() => onToggle(task)} style={[styles.checkbox, isDone && styles.checkboxDone]} />
+      <Pressable
+        onPress={() => onToggle(task)}
+        style={[
+          styles.checkbox,
+          isDone && styles.checkboxDone,
+          muted && styles.checkboxMuted,
+          highlightMine && !muted && styles.checkboxMine,
+        ]}
+      />
       <View style={styles.content}>
         <View style={styles.titleRow}>
-          <Text style={[styles.title, isDone && styles.titleDone]} numberOfLines={2}>
+          <Text style={[styles.title, muted && styles.titleMuted, isDone && styles.titleDone]} numberOfLines={2}>
             {task.title}
           </Text>
           {showAssigneeChip ? (
@@ -134,6 +152,11 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       gap: 10,
       ...baseShadow,
     },
+    cardMine: {
+      borderWidth: 1.5,
+      borderColor: colors.primary,
+      backgroundColor: withAlpha(colors.primary, mode === "dark" ? 0.22 : 0.14),
+    },
     cardUnscheduled: {
       borderWidth: 1,
       borderColor: colors.border,
@@ -153,6 +176,11 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
     cardDone: {
       opacity: 0.55,
     },
+    cardMuted: {
+      backgroundColor: colors.surfaceAlt,
+      borderColor: colors.border,
+      borderWidth: 1,
+    },
     cardActive: {
       borderWidth: 1,
       borderColor: colors.accent,
@@ -170,6 +198,13 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       backgroundColor: colors.primary,
       borderColor: colors.primary,
     },
+    checkboxMuted: {
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceAlt,
+    },
+    checkboxMine: {
+      borderColor: colors.primary,
+    },
     content: {
       flex: 1,
     },
@@ -177,6 +212,9 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       fontWeight: "600",
       color: colors.text,
       flex: 1,
+    },
+    titleMuted: {
+      color: colors.textSecondary,
     },
     titleDone: {
       textDecorationLine: "line-through",

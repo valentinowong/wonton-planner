@@ -1,63 +1,65 @@
 import { Feather } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Platform,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from "react-native";
-import type { PostgrestError } from "@supabase/supabase-js";
 import { SafeAreaView } from "react-native-safe-area-context";
-import type { PlannerListHoverTarget } from "../components/drag/dropTargets";
-import { PlannerBacklogPanel } from "../components/PlannerBacklogPanel";
-import { PlannerDailySchedulePanel, PlannerDailyTaskPanel } from "../components/PlannerDailyPanels";
-import { PlannerHero } from "../components/PlannerHero";
-import {
-  PlannerCreateListModal,
-  PlannerDeleteListModal,
-  PlannerSettingsModal,
-  PlannerTaskDetailModal,
-  PlannerNotificationsModal,
-  PlannerListSettingsModal,
-} from "../components/modals";
-import { PlannerStylesContext } from "../state/PlannerStylesContext";
-import { PlannerTaskBoard } from "../components/PlannerTaskBoard";
-import { PlannerWeekCalendarGrid } from "../components/PlannerWeekCalendarGrid";
-import { CALENDAR_DAY_WIDTH, DAY_COLUMN_WIDTH, HOUR_BLOCK_HEIGHT } from "../utils/time";
-import type { DeleteAction, PlannerDay, PlannerDragPreview, PlannerViewMode } from "../types";
-import { useAuth } from "../../auth/context/AuthContext";
-import { useListsDrawer } from "../state/ListsDrawerContext";
-import { useTheme } from "../../../theme/ThemeContext";
-import type { RemoteList } from "../hooks/useLists";
-import { useLists } from "../hooks/useLists";
-import { useTasks } from "../hooks/useTasks";
-import { useListMembers } from "../hooks/useListMembers";
 import type { LocalTask } from "../../../data/local/db";
-import { queueTaskDeletion, queueTaskMutation } from "../../../data/sync";
-import { generateUUID } from "../../../domain/shared/uuid";
 import { deleteList as deleteListRow } from "../../../data/remote/listsApi";
+import { inviteToListShare, revokeShare } from "../../../data/remote/sharesApi";
 import {
   countTasksInList,
-  deleteTasksInList,
-  fetchListBacklog,
-  logTaskHistory,
-  logAssignmentHistory,
-  fetchLatestHistory,
   deleteHistoryEntry,
+  deleteTasksInList,
+  fetchLatestHistory,
+  fetchListBacklog,
+  logAssignmentHistory,
+  logTaskHistory,
   moveTasksToList,
   type TaskWindowRow,
 } from "../../../data/remote/tasksApi";
-import { inviteToListShare, revokeShare } from "../../../data/remote/sharesApi";
+import { queueTaskDeletion, queueTaskMutation } from "../../../data/sync";
+import { generateUUID } from "../../../domain/shared/uuid";
+import type { ThemeColors } from "../../../theme";
+import { useTheme } from "../../../theme/ThemeContext";
+import { useAuth } from "../../auth/context/AuthContext";
+import type { PlannerListHoverTarget } from "../components/drag/dropTargets";
+import {
+  PlannerCreateListModal,
+  PlannerDeleteListModal,
+  PlannerFiltersModal,
+  PlannerListSettingsModal,
+  PlannerNotificationsModal,
+  PlannerSettingsModal,
+  PlannerTaskDetailModal,
+} from "../components/modals";
+import { PlannerBacklogPanel } from "../components/PlannerBacklogPanel";
+import { PlannerDailySchedulePanel, PlannerDailyTaskPanel } from "../components/PlannerDailyPanels";
+import { PlannerHero } from "../components/PlannerHero";
+import { PlannerTaskBoard } from "../components/PlannerTaskBoard";
+import { PlannerWeekCalendarGrid } from "../components/PlannerWeekCalendarGrid";
+import { useListMembers } from "../hooks/useListMembers";
+import type { RemoteList } from "../hooks/useLists";
+import { useLists } from "../hooks/useLists";
 import { useNotifications } from "../hooks/useNotifications";
 import { usePendingInvites } from "../hooks/usePendingInvites";
-import type { ThemeColors } from "../../../theme";
+import { useTasks } from "../hooks/useTasks";
+import { useListsDrawer } from "../state/ListsDrawerContext";
+import { PlannerStylesContext } from "../state/PlannerStylesContext";
+import type { DeleteAction, PlannerDay, PlannerDragPreview, PlannerViewMode } from "../types";
+import type { AssigneeFilterValue, PlannerFiltersState } from "../types/filters";
+import { CALENDAR_DAY_WIDTH, DAY_COLUMN_WIDTH, HOUR_BLOCK_HEIGHT } from "../utils/time";
 
 type UndoAction =
   | { kind: "update"; before: LocalTask; after: LocalTask; label: string; historyId?: string }
@@ -221,6 +223,13 @@ export default function ListsScreen() {
     "You already have a list with that name. Please choose a different name.",
   );
   const [viewMode, setViewMode] = useState<PlannerViewMode>("tasks");
+  const [filters, setFilters] = useState<PlannerFiltersState>({
+    assignee: "me",
+    status: "all",
+    planned: "all",
+  });
+  const [filtersModalOpen, setFiltersModalOpen] = useState(false);
+  const [showAllLists, setShowAllLists] = useState(true);
   const [plannerOffset, setPlannerOffset] = useState(0);
   const plannerDays = useMemo(
     () => buildPlannerDays(plannerOffset, daysPerView, viewMode === "calendar" ? calendarStart : undefined),
@@ -297,14 +306,30 @@ export default function ListsScreen() {
     () => orderedLists.find((list) => list.id === activeListId) ?? null,
     [activeListId, orderedLists],
   );
-  const isActiveListShareable = useMemo(() => {
-    if (!activeList) return false;
-    const name = (activeList.name ?? "").toLowerCase();
-    return !activeList.is_system && name !== "inbox";
-  }, [activeList]);
   const inboxList = orderedLists[0];
   const backlogListIds = useMemo(() => orderedLists.map((list) => list.id), [orderedLists]);
   const { memberByUserId: sharedMemberLookup } = useListMembers(backlogListIds);
+  const { activeMembers: sharedMembers } = useListMembers(backlogListIds);
+  const assigneeOptions = useMemo(() => {
+    const options: { label: string; value: AssigneeFilterValue }[] = [
+      { label: "All assignees", value: "all" },
+      { label: "Just me", value: "me" },
+      { label: "Unassigned", value: "unassigned" },
+    ];
+    const seen = new Set<string>();
+    sharedMembers
+      .filter((member) => member.user_id && member.user_id !== currentUserId)
+      .forEach((member) => {
+        if (!member.user_id || seen.has(member.user_id)) return;
+        seen.add(member.user_id);
+        const label =
+          member.display_name ||
+          member.email ||
+          (member.user_id === currentUserId ? "You" : "Collaborator");
+        options.push({ label, value: `user:${member.user_id}` });
+      });
+    return options;
+  }, [sharedMembers, currentUserId]);
   const backlogQuery = useQuery({
     queryKey: ["backlog", backlogListIds.join("|")],
     queryFn: () => fetchListBacklog(backlogListIds.length ? backlogListIds : undefined),
@@ -439,19 +464,6 @@ export default function ListsScreen() {
     };
   }, []);
 
-  const shareList = useCallback(
-    (list: RemoteList | null) => {
-      if (!list) return;
-      const name = (list.name ?? "").toLowerCase();
-      if (list.is_system || name === "inbox") {
-        showToast("Inbox cannot be shared", "error");
-        return;
-      }
-      setListSettingsTarget(list);
-    },
-    [showToast],
-  );
-
   const findInviteById = useCallback(
     (shareId: string) => (pendingInvites.data ?? []).find((invite) => invite.id === shareId) ?? null,
     [pendingInvites.data],
@@ -576,22 +588,47 @@ export default function ListsScreen() {
     }
   }, [plannerDays, railDayKey, selectedDayKey, currentStartKey, viewMode]);
 
+  const filteredScheduledRows = useMemo(() => {
+    const selectedAssigneeId =
+      filters.assignee === "me"
+        ? currentUserId
+        : filters.assignee.startsWith("user:")
+        ? filters.assignee.slice("user:".length)
+        : null;
+    return (scheduledRows ?? []).filter((row) => {
+      if (filters.assignee === "me") {
+        const assigneeOk = row.assignee_id === currentUserId || (!row.assignee_id && row.user_id === currentUserId);
+        if (!assigneeOk) return false;
+      } else if (filters.assignee === "unassigned") {
+        if (row.assignee_id) return false;
+      } else if (filters.assignee !== "all") {
+        if (row.assignee_id !== selectedAssigneeId) return false;
+      }
+      if (filters.status === "todo" && row.status === "done") return false;
+      if (filters.status === "done" && row.status !== "done") return false;
+      const hasPlan = Boolean(row.planned_start || row.planned_end);
+      if (filters.planned === "scheduled" && !hasPlan) return false;
+      if (filters.planned === "unscheduled" && hasPlan) return false;
+      if (!showAllLists && activeListId) {
+        if (row.list_id !== activeListId) return false;
+      }
+      return true;
+    });
+  }, [scheduledRows, filters, currentUserId, activeListId, showAllLists]);
+
   const scheduledByDay = useMemo(() => {
     const bucket: Record<string, LocalTask[]> = {};
     taskDays.forEach((day) => {
       bucket[day.key] = bucket[day.key] ?? [];
     });
-    (scheduledRows ?? []).forEach((row) => {
-      const assigneeOk =
-        row.assignee_id === currentUserId ||
-        (!row.assignee_id && row.user_id === currentUserId);
-      if (row.due_date && assigneeOk) {
+    filteredScheduledRows.forEach((row) => {
+      if (row.due_date) {
         bucket[row.due_date] = bucket[row.due_date] ?? [];
         bucket[row.due_date].push(rowToLocalTask(row));
       }
     });
     return bucket;
-  }, [taskDays, scheduledRows, currentUserId]);
+  }, [taskDays, filteredScheduledRows]);
 
   const selectedDay = taskDays.find((day) => day.key === selectedDayKey) ?? taskDays[0];
   const resolvedSelectedDayKey = selectedDay?.key ?? taskDays[0]?.key ?? currentStartKey;
@@ -1206,6 +1243,8 @@ export default function ListsScreen() {
           lists={orderedLists}
           activeListId={activeListId}
           onSelectList={(id) => setActiveListId(id)}
+          showAllLists={showAllLists}
+          onToggleShowAllLists={setShowAllLists}
           tasksByList={backlogByList}
           isLoading={backlogQuery.isLoading}
           onAddTask={handleAddBacklogTask}
@@ -1225,6 +1264,7 @@ export default function ListsScreen() {
           onDayHoverChange={handleBacklogDayHoverChange}
           externalHoverTarget={backlogHoverOverride}
           onOpenListDetails={(list) => setListSettingsTarget(list)}
+          currentUserId={currentUserId}
         />
           ) : null}
           <View style={styles.centerPane}>
@@ -1246,8 +1286,7 @@ export default function ListsScreen() {
                   onToday={handleResetToToday}
                   onOpenSettings={() => setSettingsModalOpen(true)}
                   onOpenNotifications={() => setNotificationsModalOpen(true)}
-                  onOpenShare={() => shareList(activeList)}
-                  shareDisabled={!isActiveListShareable}
+                  onOpenFilters={() => setFiltersModalOpen(true)}
                   unreadCount={notifications.unreadCount}
                 />
               </View>
@@ -1304,6 +1343,8 @@ export default function ListsScreen() {
                 onDropTaskOnDay={handleMoveScheduledTaskToDay}
                 onDropTaskOnList={handleMoveScheduledTaskToBacklog}
                 externalPreview={calendarPreview}
+                showAssigneeChips={filters.assignee !== "me"}
+                currentUserId={currentUserId}
               />
             ) : (
               <PlannerTaskBoard
@@ -1329,6 +1370,8 @@ export default function ListsScreen() {
                 onDropTaskOnDay={handleMoveScheduledTaskToDay}
                 onDropTaskOnList={handleMoveScheduledTaskToBacklog}
                 onReorderTaskOnDay={handleReorderScheduledTask}
+                showAssigneeChips={filters.assignee !== "me"}
+                currentUserId={currentUserId}
               />
             )}
           </View>
@@ -1351,6 +1394,8 @@ export default function ListsScreen() {
                 onDayHoverChange={handleBacklogDayHoverChange}
                 onDropTaskOnList={handleMoveScheduledTaskToBacklog}
                 onDropTaskOnDay={handleMoveScheduledTaskToDay}
+                showAssigneeChips={filters.assignee !== "me"}
+                currentUserId={currentUserId}
               />
             ) : (
               <PlannerDailySchedulePanel
@@ -1371,6 +1416,8 @@ export default function ListsScreen() {
                 onListHoverChange={handleBacklogListHoverChange}
                 onDropTaskOnDay={handleMoveScheduledTaskToDay}
                 onDropTaskOnList={handleMoveScheduledTaskToBacklog}
+                showAssigneeChips={filters.assignee !== "me"}
+                currentUserId={currentUserId}
               />
             )
           ) : null}
@@ -1416,6 +1463,13 @@ export default function ListsScreen() {
         onMarkAll={() => notifications.markAllRead()}
         onAcceptInvite={handleAcceptInvite}
         onDeclineInvite={handleDeclineInvite}
+      />
+      <PlannerFiltersModal
+        visible={filtersModalOpen}
+        value={filters}
+        onChange={(next) => setFilters(next)}
+        onClose={() => setFiltersModalOpen(false)}
+        assigneeOptions={assigneeOptions}
       />
       <Modal
         visible={duplicateDialogOpen}
@@ -1592,7 +1646,7 @@ function createStyles(colors: ThemeColors) {
     marginBottom: 12,
   },
   drawerListScroll: {
-    maxHeight: 140,
+    maxHeight: 150,
   },
   drawerListItem: {
     paddingVertical: 8,
@@ -2069,11 +2123,31 @@ function createStyles(colors: ThemeColors) {
     borderColor: calendarTaskBorder,
     position: "relative",
   },
+  calendarBlockMuted: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.border,
+  },
   calendarBlockContent: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     gap: 8,
+  },
+  calendarAssigneeChip: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 4,
+  },
+  calendarAssigneeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.text,
   },
   calendarBlockFloating: {
     position: "absolute",
@@ -2248,6 +2322,35 @@ function createStyles(colors: ThemeColors) {
     color: colors.text,
     fontWeight: "700",
     fontSize: 15,
+  },
+  filterPillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  filterPill: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: 2,
+  },
+  filterPillActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surfaceAlt,
+  },
+  filterPillText: {
+    color: colors.textSecondary,
+    fontWeight: "600",
+  },
+  filterPillTextActive: {
+    color: colors.text,
+  },
+  filterPillMeta: {
+    color: colors.textMuted,
+    fontSize: 12,
   },
   modalSectionMeta: {
     color: colors.textSecondary,

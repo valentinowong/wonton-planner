@@ -14,6 +14,7 @@ type Props = {
   badgeText?: string | null;
   showGrabHandle?: boolean;
   showAssigneeChip?: boolean;
+  muted?: boolean;
 };
 
 export function TaskCard({
@@ -24,6 +25,7 @@ export function TaskCard({
   badgeText,
   showGrabHandle = false,
   showAssigneeChip = false,
+  muted = false,
 }: Props) {
   const isDone = task.status === "done";
   const { colors, mode } = useTheme();
@@ -32,8 +34,9 @@ export function TaskCard({
     [task.due_date, task.planned_end, task.planned_start],
   );
   const styles = useMemo(() => createStyles(colors, mode), [colors, mode]);
-  const scheduleStyleKey =
+  const baseKey =
     scheduleState === "unscheduled" ? "cardUnscheduled" : scheduleState === "dateOnly" ? "cardDateOnly" : "cardTimed";
+  const scheduleStyleKey = muted ? `${baseKey}Muted` : baseKey;
 
   const assigneeInitials = useMemo(() => {
     if (!task.assignee_id) return null;
@@ -70,11 +73,11 @@ export function TaskCard({
       <View style={styles.row}>
         <Pressable
           onPress={() => onToggleStatus?.(task)}
-          style={[styles.checkbox, isDone && styles.checkboxDone]}
+          style={[styles.checkbox, isDone && styles.checkboxDone, muted && styles.checkboxMuted]}
         />
         <View style={styles.content}>
           <View style={styles.titleRow}>
-            <Text style={[styles.title, isDone && styles.titleDone]} numberOfLines={2}>
+            <Text style={[styles.title, muted && styles.titleMuted, isDone && styles.titleDone]} numberOfLines={2}>
               {task.title}
             </Text>
             {!hasPlannedTime && showAssigneeChip ? (
@@ -92,10 +95,14 @@ export function TaskCard({
             ) : null}
           </View>
           <View style={styles.metaRow}>
-            {detailText ? <Text style={styles.detail}>{detailText}</Text> : <View style={styles.detailPlaceholder} />}
+            {detailText ? (
+              <Text style={[styles.detail, muted && styles.detailMuted]}>{detailText}</Text>
+            ) : (
+              <View style={styles.detailPlaceholder} />
+            )}
             {badgeText ? (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{badgeText}</Text>
+                <Text style={[styles.badgeText, muted && styles.badgeTextMuted]}>{badgeText}</Text>
               </View>
             ) : null}
             {hasPlannedTime && showAssigneeChip ? (
@@ -128,6 +135,13 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
   const dateOnlyTint = withAlpha(colors.primary, mode === "dark" ? 0.14 : 0.07);
   const timedTint = withAlpha(colors.primary, mode === "dark" ? 0.22 : 0.12);
   const dateOnlyBorder = withAlpha(colors.primary, mode === "dark" ? 0.85 : 0.55);
+  // Muted (other-assignee / unassigned) variants lean on greys to stay subdued while still showing schedule state.
+  const mutedDateBg = withAlpha(colors.textMuted, mode === "dark" ? 0.26 : 0.16);
+  const mutedDateBorder = withAlpha(colors.textMuted, mode === "dark" ? 0.6 : 0.42);
+  const mutedTimedBg = withAlpha(colors.textMuted, mode === "dark" ? 0.38 : 0.24);
+  const mutedTimedBorder = withAlpha(colors.textMuted, mode === "dark" ? 0.8 : 0.58);
+  const mutedUnscheduledBg = withAlpha(colors.textMuted, mode === "dark" ? 0.12 : 0.07);
+  const mutedUnscheduledBorder = withAlpha(colors.textMuted, mode === "dark" ? 0.42 : 0.28);
   return StyleSheet.create({
     card: {
       backgroundColor: colors.surface,
@@ -141,18 +155,39 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       borderStyle: "dashed",
       backgroundColor: unscheduledTint,
     },
+    cardUnscheduledMuted: {
+      borderWidth: 1,
+      borderColor: mutedUnscheduledBorder,
+      borderStyle: "dashed",
+      backgroundColor: mutedUnscheduledBg,
+    },
     cardDateOnly: {
       borderWidth: 1,
       borderColor: dateOnlyBorder,
       backgroundColor: dateOnlyTint,
+    },
+    cardDateOnlyMuted: {
+      borderWidth: 1.1,
+      borderColor: mutedDateBorder,
+      backgroundColor: mutedDateBg,
     },
     cardTimed: {
       borderWidth: 1.5,
       borderColor: colors.primary,
       backgroundColor: timedTint,
     },
+    cardTimedMuted: {
+      borderWidth: 1.6,
+      borderColor: mutedTimedBorder,
+      backgroundColor: mutedTimedBg,
+    },
     cardDone: {
       opacity: 0.6,
+    },
+    cardMuted: {
+      backgroundColor: colors.surfaceAlt,
+      borderColor: colors.border,
+      borderWidth: 1,
     },
     row: {
       flexDirection: "row",
@@ -170,6 +205,10 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       backgroundColor: colors.primary,
       borderColor: colors.primary,
     },
+    checkboxMuted: {
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceAlt,
+    },
     content: {
       flex: 1,
     },
@@ -183,6 +222,9 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       fontWeight: "600",
       color: colors.text,
       flex: 1,
+    },
+    titleMuted: {
+      color: colors.textSecondary,
     },
     titleDone: {
       textDecorationLine: "line-through",
@@ -199,6 +241,9 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       fontSize: 13,
       color: colors.textSecondary,
       flexShrink: 1,
+    },
+    detailMuted: {
+      color: colors.textMuted,
     },
     detailPlaceholder: {
       flex: 1,
@@ -221,6 +266,9 @@ function createStyles(colors: ThemeColors, mode: ThemeMode) {
       fontSize: 12,
       fontWeight: "600",
       color: colors.textSecondary,
+    },
+    badgeTextMuted: {
+      color: colors.textMuted,
     },
     assigneeChip: {
       width: 26,

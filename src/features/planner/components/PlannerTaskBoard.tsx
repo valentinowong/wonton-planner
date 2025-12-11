@@ -12,6 +12,7 @@ import type { PlannerDay, PlannerDragPreview } from "../types";
 import { DAY_COLUMN_WIDTH } from "../utils/time";
 import { getTaskTimeMetrics } from "../utils/taskTime";
 import { formatDuration, formatTaskStartTime } from "../utils/taskDisplay";
+import { isOtherOrUnassigned } from "../utils/assignee";
 import { resolvePlannerDropTarget, type PlannerDropTarget, type PlannerListHoverTarget } from "./drag/dropTargets";
 
 export type PlannerTaskBoardProps = {
@@ -42,6 +43,8 @@ export type PlannerTaskBoardProps = {
     position?: "before" | "after",
   ) => void | Promise<void>;
   onReorderTaskOnDay?: (task: LocalTask, dayKey: string, targetTaskId: string, position: "before" | "after") => void | Promise<void>;
+  showAssigneeChips?: boolean;
+  currentUserId: string | null;
 };
 
 export function PlannerTaskBoard({
@@ -67,6 +70,8 @@ export function PlannerTaskBoard({
   onDropTaskOnDay,
   onDropTaskOnList,
   onReorderTaskOnDay,
+  showAssigneeChips = true,
+  currentUserId,
 }: PlannerTaskBoardProps) {
   const styles = usePlannerStyles();
   const dayIndexMap = useMemo(() => {
@@ -323,6 +328,7 @@ export function PlannerTaskBoard({
               const durationMinutes = metrics?.durationMinutes ?? task.estimate_minutes ?? null;
               const durationText = durationMinutes ? formatDuration(durationMinutes) : null;
               const detailText = formatTaskStartTime(task);
+              const muted = isOtherOrUnassigned(task, currentUserId);
               const isHoveringTask = hoverTarget?.taskId === task.id;
               const isDropHover = hoverTarget?.type === "boardTask" && hoverTarget.taskId === task.id;
               const showBeforeIndicator = isDropHover && hoverTarget.position === "before";
@@ -343,6 +349,8 @@ export function PlannerTaskBoard({
                       badgeText={durationText}
                       detailText={detailText}
                       showGrabHandle={false}
+                      showAssigneeChip={showAssigneeChips}
+                      muted={muted}
                       onDragStart={handleDragStart}
                       onDragMove={handleDragMove}
                       onDragEnd={handleDragEnd}
@@ -370,6 +378,8 @@ type DraggableBoardTaskCardProps = {
   badgeText?: string | null;
   detailText?: string | null;
   showGrabHandle?: boolean;
+  showAssigneeChip?: boolean;
+  muted?: boolean;
   onDragStart: (task: LocalTask, x: number, y: number) => void;
   onDragMove: (x: number, y: number) => void;
   onDragEnd: (x: number, y: number) => void;
@@ -383,6 +393,8 @@ function DraggableBoardTaskCard({
   badgeText,
   detailText,
   showGrabHandle = false,
+  showAssigneeChip = true,
+  muted = false,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -434,6 +446,8 @@ function DraggableBoardTaskCard({
         badgeText={badgeText}
         detailText={detailText}
         showGrabHandle={showGrabHandle}
+        showAssigneeChip={showAssigneeChip}
+        muted={muted}
       />
     </GestureDetector>
   );

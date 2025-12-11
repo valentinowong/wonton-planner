@@ -9,6 +9,7 @@ import { useTheme } from "../../../theme/ThemeContext";
 import type { RemoteList } from "../hooks/useLists";
 import { usePlannerStyles } from "../state/PlannerStylesContext";
 import type { PlannerDragPreview } from "../types";
+import { isOtherOrUnassigned } from "../utils/assignee";
 import {
   BACKLOG_LIST_HEADER_ID_PREFIX,
   BACKLOG_LIST_ZONE_ID_PREFIX,
@@ -20,6 +21,8 @@ export type PlannerBacklogPanelProps = {
   lists: RemoteList[];
   activeListId: string | null;
   onSelectList: (listId: string) => void;
+  showAllLists: boolean;
+  onToggleShowAllLists: (next: boolean) => void;
   tasksByList: Record<string, LocalTask[]>;
   isLoading: boolean;
   onAddTask: (listId: string, title: string) => Promise<void>;
@@ -38,13 +41,15 @@ export type PlannerBacklogPanelProps = {
   onDayHoverChange?: (dayKey: string | null) => void;
   externalHoverTarget?: PlannerListHoverTarget | null;
   onBeginSchedule?: (task: LocalTask) => void;
-  onOpenListDetails: (list: RemoteList) => void;
+  currentUserId: string | null;
 };
 
 export function PlannerBacklogPanel({
   lists,
   activeListId,
   onSelectList,
+  showAllLists,
+  onToggleShowAllLists,
   tasksByList,
   isLoading,
   onAddTask,
@@ -63,11 +68,11 @@ export function PlannerBacklogPanel({
   externalHoverTarget,
   onBeginSchedule,
   onOpenListDetails,
+  currentUserId,
 }: PlannerBacklogPanelProps) {
   const styles = usePlannerStyles();
   const { colors } = useTheme();
   const activeList = lists.find((list) => list.id === activeListId) ?? lists[0];
-  const [showAllLists, setShowAllLists] = useState(false);
   const [expandedLists, setExpandedLists] = useState<Record<string, boolean>>({});
   const [internalHoverTarget, setInternalHoverTarget] = useState<PlannerListHoverTarget | null>(null);
   const [draggingTask, setDraggingTask] = useState<LocalTask | null>(null);
@@ -250,7 +255,7 @@ export function PlannerBacklogPanel({
 
   function handleSelectList(listId: string) {
     if (showAllLists) {
-      setShowAllLists(false);
+      onToggleShowAllLists(false);
     }
     onSelectList(listId);
   }
@@ -263,7 +268,7 @@ export function PlannerBacklogPanel({
       <ScrollView style={styles.drawerListScroll}>
         {hasMultipleLists ? (
           <Pressable
-            onPress={() => setShowAllLists((prev) => !prev)}
+            onPress={() => onToggleShowAllLists(!showAllLists)}
             style={[styles.drawerListItem, showAllLists && styles.drawerListItemActive]}
           >
             <Text style={[styles.drawerListLabel, showAllLists && styles.drawerListLabelActive]} numberOfLines={1}>
@@ -313,7 +318,7 @@ export function PlannerBacklogPanel({
         {visibleLists.map((list) => {
           const listTasks = tasksByList[list.id] ?? [];
           const listTitle = list.name ?? "Untitled";
-          const expanded = showAllLists ? expandedLists[list.id] ?? false : true;
+          const expanded = showAllLists ? expandedLists[list.id] ?? true : true;
           const isListHovered = hoverTarget?.listId === list.id;
           return (
             <View
@@ -372,19 +377,20 @@ export function PlannerBacklogPanel({
                           const isDragging = draggingTask?.id === task.id;
                           return (
                             <View key={task.id} style={styles.listTaskWrapper}>
-                              <DraggableTaskRow
-                                task={task}
-                                listId={list.id}
-                                onToggleTask={onToggleTask}
-                                onOpenTask={onOpenTask}
-                                subtitle={task.notes ?? undefined}
-                                onDragStart={handleDragStart}
-                                onDragMove={handleDragMove}
-                                onDragEnd={handleDragRelease}
-                                onDragCancel={handleDragCancel}
-                                dragging={isDragging}
-                              />
-                            </View>
+                            <DraggableTaskRow
+                              task={task}
+                              listId={list.id}
+                              onToggleTask={onToggleTask}
+                              onOpenTask={onOpenTask}
+                              subtitle={task.notes ?? undefined}
+                              onDragStart={handleDragStart}
+                              onDragMove={handleDragMove}
+                              onDragEnd={handleDragRelease}
+                              onDragCancel={handleDragCancel}
+                              dragging={isDragging}
+                              currentUserId={currentUserId}
+                            />
+                          </View>
                           );
                         });
                       })()}
@@ -413,6 +419,7 @@ type DraggableTaskRowProps = {
   onDragEnd: (x: number, y: number) => void;
   onDragCancel: () => void;
   dragging?: boolean;
+  currentUserId: string | null;
 };
 
 function DraggableTaskRow({
@@ -426,9 +433,12 @@ function DraggableTaskRow({
   onDragEnd,
   onDragCancel,
   dragging = false,
+  currentUserId,
 }: DraggableTaskRowProps) {
   const styles = usePlannerStyles();
   const shouldSkipNextPressRef = useRef(false);
+  const muted = isOtherOrUnassigned(task, currentUserId);
+  const highlightMine = Boolean(currentUserId && task.assignee_id === currentUserId);
 
   const handleTaskPress = useCallback(
     (nextTask: LocalTask) => {
@@ -483,6 +493,8 @@ function DraggableTaskRow({
           active={false}
           showGrabHandle={false}
           showAssigneeChip
+          muted={muted}
+          highlightMine={highlightMine}
         />
       </GestureDetector>
     </View>
