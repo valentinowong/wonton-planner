@@ -86,6 +86,8 @@ export type RecurrenceRow = {
   by_monthday: number[] | null;
   start_date: string;
   until: string | null;
+  planned_start: string | null;
+  planned_end: string | null;
   estimate_minutes: number | null;
   priority: number | null;
   active: boolean;

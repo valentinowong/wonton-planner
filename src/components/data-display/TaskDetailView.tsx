@@ -377,6 +377,8 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
       title,
       notes,
       list_id: listAssignment,
+      planned_start: baseTask?.planned_start ?? null,
+      planned_end: baseTask?.planned_end ?? null,
       estimate_minutes: baseTask?.estimate_minutes ?? null,
       priority: baseTask?.priority ?? null,
     };
@@ -386,7 +388,12 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
           const parsed = source.start_date ? parseDateKey(source.start_date) : null;
           return parsed ? parsed.getDay() : new Date().getDay();
         })()];
-    const startDateKey = (changes.due_date as string | null | undefined) ?? source.start_date ?? dateInput ?? occurrenceDate ?? new Date().toISOString().split("T")[0];
+    const startDateKey =
+      (changes.due_date as string | null | undefined) ??
+      source.start_date ??
+      dateInput ??
+      occurrenceDate ??
+      new Date().toISOString().split("T")[0];
     const payload: Partial<RecurrenceRow> & { start_date: string; freq: RecurrenceRow["freq"] } = {
       id: recurrenceId ?? undefined,
       title: "title" in changes ? (changes.title as string | undefined) ?? "" : source.title ?? "",
@@ -395,6 +402,14 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
       estimate_minutes:
         "estimate_minutes" in changes ? changes.estimate_minutes ?? null : source.estimate_minutes ?? null,
       priority: "priority" in changes ? changes.priority ?? null : source.priority ?? null,
+      planned_start:
+        "planned_start" in changes
+          ? (changes.planned_start as string | null | undefined) ?? null
+          : source.planned_start ?? baseTask?.planned_start ?? null,
+      planned_end:
+        "planned_end" in changes
+          ? (changes.planned_end as string | null | undefined) ?? null
+          : source.planned_end ?? baseTask?.planned_end ?? null,
       byday: daySeed,
       until: recurrenceUntil || null,
       interval: 1,
@@ -425,6 +440,7 @@ export const TaskDetailView = forwardRef<TaskDetailViewHandle, Props>(function T
       if ("list_id" in changes) taskPatch.list_id = changes.list_id ?? null;
       if ("planned_start" in changes) taskPatch.planned_start = changes.planned_start ?? null;
       if ("planned_end" in changes) taskPatch.planned_end = changes.planned_end ?? null;
+      if ("assignee_id" in changes) taskPatch.assignee_id = changes.assignee_id ?? null;
       if ("estimate_minutes" in changes) taskPatch.estimate_minutes = changes.estimate_minutes ?? null;
       if ("priority" in changes) taskPatch.priority = changes.priority ?? null;
       if ("due_date" in changes) {

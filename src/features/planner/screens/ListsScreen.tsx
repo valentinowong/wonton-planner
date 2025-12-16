@@ -2161,6 +2161,8 @@ function createStyles(colors: ThemeColors) {
     flex: 1,
     marginRight: 8,
     fontSize: 12,
+    lineHeight: 16,
+    overflow: "hidden",
   },
   calendarBlockDragging: {
     opacity: 1,

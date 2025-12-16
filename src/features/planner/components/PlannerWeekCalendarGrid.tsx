@@ -801,7 +801,9 @@ function CalendarGridTask({
               )}
             </View>
           ) : null}
-          <Text style={styles.calendarBlockText}>{task.title}</Text>
+          <Text style={styles.calendarBlockText} numberOfLines={1} ellipsizeMode="tail">
+            {task.title}
+          </Text>
           <Pressable onPress={handleToggle}>
             <Ionicons
               name={task.status === "done" ? "checkmark-circle" : "ellipse-outline"}

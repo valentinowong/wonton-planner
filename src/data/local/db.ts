@@ -108,6 +108,8 @@ const MIGRATIONS: string[] = [
       by_monthday text,
       start_date text not null,
       until text,
+      planned_start text,
+      planned_end text,
       estimate_minutes integer,
       priority integer,
       active integer default 1,
@@ -150,6 +152,7 @@ export async function initializeDatabase() {
     await db.execAsync(statement);
   }
   await ensureRecurrenceTemplateColumn();
+  await ensureRecurrencePlannedColumns();
   await ensureTasksTableAllowsNullListId();
   initialized = true;
 }
@@ -161,6 +164,20 @@ async function ensureRecurrenceTemplateColumn() {
   const hasTemplate = columns.some((column) => column.name === "template_task_id");
   if (!hasTemplate) {
     await db.execAsync("alter table recurrences add column template_task_id text;");
+  }
+}
+
+async function ensureRecurrencePlannedColumns() {
+  if (!db) return;
+  type ColumnInfo = { name: string };
+  const columns = await db.getAllAsync<ColumnInfo>("pragma table_info('recurrences');");
+  const hasPlannedStart = columns.some((column) => column.name === "planned_start");
+  const hasPlannedEnd = columns.some((column) => column.name === "planned_end");
+  if (!hasPlannedStart) {
+    await db.execAsync("alter table recurrences add column planned_start text;");
+  }
+  if (!hasPlannedEnd) {
+    await db.execAsync("alter table recurrences add column planned_end text;");
   }
 }
 
